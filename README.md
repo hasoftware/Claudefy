@@ -24,7 +24,7 @@ Có thể nghĩ Claudefy là phiên bản "đã trang điểm" cho Claude Code. 
 Khi đang code trong một project Node.js có git, bạn sẽ thấy hai dòng như sau ở dưới khung chat Claude Code:
 
 ```
- ZuckShop-Com    main 12  3d   Node 22.19.0    #42    Opus 4.7   01:33 ICT (46m)
+ my-project    main 12  3d   Node 22.19.0    #42    Opus 4.7   01:33 ICT (46m)
  Context: 84%    5h: 24% 05:40    7d: 17%    $8.42    +616 -215    164.3k
 ```
 
@@ -32,7 +32,7 @@ Dòng một là "tôi đang ở đâu, làm với cái gì":
 
 | Vị trí | Ý nghĩa |
 |---|---|
-| ZuckShop-Com | Tên thư mục project hiện tại |
+| my-project | Tên thư mục project hiện tại |
 | main 12 3d | Branch tên main, có 12 file thay đổi chưa commit, lần commit gần nhất cách đây 3 ngày |
 | Node 22.19.0 | Runtime tự nhận theo manifest, hiện có hỗ trợ Node, Python, Rust, Go, .NET, Java, Ruby, Flutter |
 | #42 | Pull request số 42 đang mở cho branch hiện tại, dấu chọn nghĩa là CI đã pass |
@@ -68,7 +68,7 @@ Khi quota gần hết hoặc chi phí vượt ngưỡng, thông báo sẽ kêu b
 
 Mỗi khi mở Claude Code trong một thư mục mới, tab Windows Terminal sẽ tự đổi tên thành "TenProject - Claude Code". Khi mở nhiều tab cùng lúc với nhiều project khác nhau, bạn nhìn vào title là biết tab nào của project nào.
 
-Ví dụ khi mở Claude Code trong thư mục ZuckShop-Com, tab terminal sẽ hiện "ZuckShop-Com - Claude Code".
+Ví dụ khi mở Claude Code trong thư mục my-project, tab terminal sẽ hiện "my-project - Claude Code".
 
 ### Mười theme màu chọn sẵn
 
@@ -93,56 +93,107 @@ Khoảng năm mươi lệnh đọc an toàn được thêm vào allowlist của 
 
 Tự động đăng ký sequential-thinking MCP server. Đây là một công cụ giúp Claude phân tích vấn đề phức tạp theo từng bước rõ ràng thay vì trả lời ngẫu hứng.
 
+## Cấu trúc repository
+
+Claudefy hỗ trợ ba hệ điều hành. Mỗi nền tảng có thư mục riêng chứa script được port phù hợp.
+
+```
+Claudefy/
+  windows/        cho Windows 10 và 11, viết bằng PowerShell
+  Linux/          cho Linux mọi distro, viết bằng bash
+  MACOS/          cho macOS, viết bằng bash với Homebrew và osascript
+  README.md       file này
+  LICENSE
+```
+
+Tất cả các nền tảng đều có chung tập tính năng, chỉ khác cách cài font và cách hiển thị notification. Riêng menu Theme chỉ có ở phiên bản Windows do mỗi terminal trên Linux và macOS có cách cấu hình màu khác nhau.
+
 ## Yêu cầu hệ thống
 
-| Bắt buộc | Lý do |
-|---|---|
-| Windows 10 hoặc Windows 11 | Hệ điều hành |
-| PowerShell 7 trở lên | Chạy script, có thể cài bằng winget install Microsoft.PowerShell |
-| Claude Code CLI | Tất nhiên rồi |
-| winget | Để tự cài font, có thể bỏ qua nếu muốn cài font thủ công |
+Phần chung cho ba nền tảng:
 
-| Khuyến nghị | Lý do |
+| Bắt buộc | Mô tả |
 |---|---|
-| Node.js | Để chạy MCP server |
-| git | Hiện thị block git trong statusLine |
-| gh CLI đã đăng nhập | Hiện thị block PR và CI status |
+| Claude Code CLI | Phần mềm chính, cài từ trang chủ Claude |
+| Một terminal hỗ trợ font Nerd Font | Windows Terminal, GNOME Terminal, iTerm2, Alacritty, Kitty đều được |
+
+Phần riêng từng nền tảng:
+
+| Nền tảng | Yêu cầu thêm |
+|---|---|
+| Windows | PowerShell 7 trở lên, winget |
+| Linux | jq, curl hoặc wget, unzip, fc-cache |
+| macOS | jq, Homebrew (khuyến nghị để tự cài font) |
+
+Khuyến nghị bổ sung cho cả ba nền tảng:
+
+| Khuyến nghị | Mở khoá tính năng |
+|---|---|
+| git | Hiển thị block git trong statusLine |
+| Node.js | Chạy MCP server sequential-thinking |
+| gh CLI đã đăng nhập | Hiển thị block PR và CI status |
 
 ## Cài đặt
 
-Có ba cách dùng tuỳ độ ngại đụng terminal.
+Chọn hướng dẫn theo hệ điều hành đang dùng.
 
-### Cách một, tải về và bấm hai lần chuột
+### Windows
 
-Tải ba file Claudefy.ps1, Install-Claudefy.ps1, Claudefy.cmd từ release mới nhất, để chung một thư mục, sau đó bấm hai lần vào Claudefy.cmd. Một menu sẽ hiện ra, chọn 1 để cài đặt.
+Vào thư mục windows trong repository, tải ba file Claudefy.ps1, Install-Claudefy.ps1, Claudefy.cmd, để chung một thư mục bất kỳ, sau đó bấm hai lần vào Claudefy.cmd. Menu chính sẽ hiện ra, chọn 1 để cài đặt.
 
-### Cách hai, mở Windows Terminal và chạy lệnh
+Hoặc mở Windows Terminal và gõ:
 
 ```powershell
-cd duongdan-toi-thumuc-Claudefy
+cd duongdan-toi-thumuc-windows
 .\Claudefy.ps1
 ```
 
-### Cách ba, dùng installer trực tiếp không qua menu
+Chi tiết thêm trong windows/README.md.
 
-```powershell
-.\Install-Claudefy.ps1
+### Linux
+
+Vào thư mục Linux trong repository, tải toàn bộ thư mục về (gồm install-claudefy.sh, claudefy.sh và folder lib), sau đó chạy:
+
+```bash
+cd duongdan-toi-thumuc-Linux
+chmod +x claudefy.sh install-claudefy.sh lib/*.sh
+./claudefy.sh
 ```
 
-Hoặc thêm các flag để bỏ qua một số bước:
+Menu chính sẽ hiện ra, chọn 1 để cài đặt.
 
-```powershell
-.\Install-Claudefy.ps1 -SkipFont
-.\Install-Claudefy.ps1 -SkipMCP
-.\Install-Claudefy.ps1 -SkipWindowsTerminal
-.\Install-Claudefy.ps1 -Force
+Hoặc bỏ qua menu, chạy installer trực tiếp:
+
+```bash
+./install-claudefy.sh
+./install-claudefy.sh --skip-font
+./install-claudefy.sh --skip-mcp
+./install-claudefy.sh --force
 ```
 
-Sau khi installer chạy xong, cần đóng tất cả cửa sổ Windows Terminal rồi mở lại để font Nerd Font được nạp. Sau đó mở Claude Code trong project bất kỳ, thanh statusLine mới sẽ hiển thị ngay.
+Chi tiết thêm trong Linux/README.md.
+
+### macOS
+
+Vào thư mục MACOS trong repository, tải toàn bộ thư mục về, sau đó chạy:
+
+```bash
+cd duongdan-toi-thumuc-MACOS
+chmod +x claudefy.sh install-claudefy.sh lib/*.sh
+./claudefy.sh
+```
+
+Menu chính sẽ hiện ra, chọn 1 để cài đặt.
+
+Trên macOS, installer sẽ dùng Homebrew để cài JetBrainsMono Nerd Font cask. Nếu chưa có Homebrew, cài trước tại brew.sh hoặc dùng cờ --skip-font rồi cài font bằng tay.
+
+Chi tiết thêm trong MACOS/README.md.
 
 ## Sử dụng menu Claudefy
 
-Khi chạy Claudefy.ps1, một menu chính sẽ hiện ra với bốn lựa chọn:
+Menu Claudefy có cấu trúc nhất quán trên ba nền tảng, chỉ khác số lượng option do menu Theme chỉ có trên Windows.
+
+Trên Windows, menu có bốn lựa chọn:
 
 ```
   Main Menu
@@ -151,6 +202,18 @@ Khi chạy Claudefy.ps1, một menu chính sẽ hiện ra với bốn lựa ch�
     [2] Reset to Default
     [3] Theme for Claude Code
     [4] About
+
+    [Q] Quit
+```
+
+Trên Linux và macOS, menu có ba lựa chọn (không có mục Theme):
+
+```
+  Main Menu
+  ------------------------------
+    [1] Install Claudefy
+    [2] Reset to Default
+    [3] About
 
     [Q] Quit
 ```
@@ -262,9 +325,13 @@ Block PR và CI mất khoảng 200 đến 500 mili giây mỗi lần gọi gh AP
 
 Script được thiết kế để idempotent, tức là chạy nhiều lần vẫn an toàn. Mỗi lần chạy đều backup trước nên không sợ mất config cũ.
 
-### Có hỗ trợ macOS hoặc Linux không
+### Linux và macOS có đầy đủ tính năng như Windows không
 
-Chưa. Claudefy hiện chỉ hỗ trợ Windows vì dùng PowerShell và Windows Terminal. Có thể chuyển port sang bash sau, nhưng chưa có kế hoạch.
+Gần đầy đủ. Các tính năng cốt lõi như statusLine hai dòng, hooks notification, hooks tự đặt tên tab, MCP server, allowlist permission đều giống nhau. Khác biệt:
+
+- Trên Linux dùng notify-send để hiện notification, trên macOS dùng osascript display notification, trên Windows dùng OSC 9 toast của Windows Terminal.
+- Menu Theme với mười color scheme chỉ có ở phiên bản Windows do Windows Terminal có file settings.json thống nhất. Trên Linux và macOS, mỗi terminal có cách cấu hình màu riêng nên không có menu Theme.
+- Font trên Windows cài qua winget, trên macOS cài qua Homebrew cask, trên Linux tải từ GitHub release của nerd-fonts về thư mục font của user.
 
 ## Liên hệ
 
