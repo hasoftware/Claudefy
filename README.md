@@ -10,7 +10,7 @@ Bộ công cụ cá nhân hoá Claude Code cho cả Windows, Linux và macOS. M�
   \____|_|\__,_|\__,_|\__,_|\___|_|  \__, |
                                      |___/
 
-       Claudefy v1.0.0  -  make Claude Code yours.
+       Claudefy v1.0.1  -  make Claude Code yours.
 ```
 
 ## Claudefy là gì

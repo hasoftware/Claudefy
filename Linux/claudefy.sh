@@ -10,7 +10,7 @@
 set -e
 export LANG=en_US.UTF-8
 
-VERSION="1.0.0"
+VERSION="1.0.1"
 AUTHOR="Hoang Anh Dev"
 ADMIN="HASOFTWARE"
 TELEGRAM="https://t.me/hasoftware"
