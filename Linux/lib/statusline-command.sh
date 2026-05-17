@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Claudefy statusLine - Linux/bash port
-# Outputs a 2-line Powerline statusLine. Reads JSON from stdin via jq.
+# Outputs a 2- or 3-line Powerline statusLine. Reads JSON from stdin via jq.
+# Line 3 (total LOC) only renders if DevRadar is installed (npm install -g devradar).
 #
 # Author     : Hoang Anh Dev
 # Admin      : HASOFTWARE
@@ -69,6 +70,9 @@ NF_DOTNET=$'\xee\x9d\xbf'   # U+E77F
 NF_JAVA=$'\xee\x9c\xb8'     # U+E738
 NF_RUBY=$'\xee\x9c\xb9'     # U+E739
 NF_FLUTTER=$'\xee\x8a\x8e'  # U+E28E
+NF_CODE=$'\xef\x84\xa1'     # U+F121 (</> code icon)
+NF_CUBE=$'\xef\x86\xb2'     # U+F1B2 (cube — frameworks)
+NF_PIE=$'\xef\x88\x80'      # U+F200 (pie-chart — ratio)
 NF_ARROW=$'\xee\x82\xb0'    # U+E0B0
 DOT_FULL=$'\xe2\x97\x8f'    # U+25CF
 DOT_OPEN=$'\xe2\x97\x8b'    # U+25CB
@@ -329,8 +333,62 @@ if [ "$total_tok" -gt 0 ] 2>/dev/null; then
 fi
 
 # ===========================================================================
+# LINE 3: Project DNA (DevRadar — cached by git HEAD, TTL 10min)
+# ===========================================================================
+L3_BG=(); L3_FG=(); L3_TEXT=()
+add_l3() { L3_BG+=("$1"); L3_FG+=("$2"); L3_TEXT+=("$3"); }
+
+if [ -n "$cwd" ] && [ -d "$cwd" ] && command -v devradar >/dev/null 2>&1; then
+  head_sha=$(git -C "$cwd" rev-parse HEAD 2>/dev/null)
+  cache_key_raw="${cwd}|${head_sha}"
+  dr_cache_key=$(echo "$cache_key_raw" | tr '/\\:*?"<>|' '_')
+  dr_cache_file="/tmp/claude-devradar-cache-$dr_cache_key.json"
+
+  dr_data=""
+  if [ -f "$dr_cache_file" ]; then
+    ts=$(jq -r '.timestamp // empty' "$dr_cache_file" 2>/dev/null)
+    if [ -n "$ts" ]; then
+      cache_age=$(( $(date -u +%s) - $(date -u -d "$ts" +%s 2>/dev/null) ))
+      if [ "$cache_age" -lt 600 ] 2>/dev/null && [ "$cache_age" -ge 0 ] 2>/dev/null; then
+        dr_data=$(jq -c '.data // empty' "$dr_cache_file" 2>/dev/null)
+      fi
+    fi
+  fi
+  if [ -z "$dr_data" ] || [ "$dr_data" = "null" ]; then
+    dr_json=$(devradar --format json "$cwd" 2>/dev/null)
+    if [ -n "$dr_json" ]; then
+      dr_data=$(echo "$dr_json" | jq -c '.' 2>/dev/null)
+      if [ -n "$dr_data" ]; then
+        jq -n --argjson d "$dr_data" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{timestamp:$t, data:$d}' > "$dr_cache_file" 2>/dev/null
+      fi
+    fi
+  fi
+  if [ -n "$dr_data" ] && [ "$dr_data" != "null" ]; then
+    code_lines=$(echo "$dr_data" | jq -r '.summary.codeLines // 0' 2>/dev/null)
+    if [ "$code_lines" -gt 0 ] 2>/dev/null; then
+      fw_list=$(echo "$dr_data" | jq -r '.technologies.frameworks // [] | join("·")' 2>/dev/null)
+      [ -n "$fw_list" ] && add_l3 60 15 " $NF_CUBE $fw_list "
+
+      loc_str=$(human_tokens "$code_lines")
+      add_l3 23 15 " $NF_CODE $loc_str Lines "
+
+      total_lines=$(echo "$dr_data" | jq -r '.summary.totalLines // 0' 2>/dev/null)
+      if [ "$total_lines" -gt 0 ] 2>/dev/null; then
+        ratio=$(awk -v c="$code_lines" -v t="$total_lines" 'BEGIN{ printf "%.0f", (c/t)*100 }')
+        add_l3 25 15 " $NF_PIE $ratio% code "
+      fi
+    fi
+  fi
+fi
+
+# ===========================================================================
 # Output
 # ===========================================================================
 line1=$(render_line L1_BG L1_FG L1_TEXT)
 line2=$(render_line L2_BG L2_FG L2_TEXT)
-printf '%s\n%s' "$line1" "$line2"
+if [ "${#L3_BG[@]}" -gt 0 ]; then
+  line3=$(render_line L3_BG L3_FG L3_TEXT)
+  printf '%s\n%s\n%s' "$line1" "$line2" "$line3"
+else
+  printf '%s\n%s' "$line1" "$line2"
+fi

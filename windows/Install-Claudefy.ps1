@@ -13,12 +13,14 @@
 .DESCRIPTION
     All-in-one installer that customizes Claude Code on Windows:
       - JetBrainsMono Nerd Font (via winget)
-      - Powerline-style 2-line statusLine showing:
+      - Powerline-style statusLine (up to 3 lines) showing:
           Line 1: folder | git | runtime | stash | commit-age | PR/CI | model | clock
           Line 2: context% | 5h% | 7d% | Opus 7d% | cost | lines | tokens
+          Line 3: total LOC of project (requires DevRadar — optional)
       - Stop hook: notification + quota alerts when Claude finishes
       - SessionStart hook: dynamic Windows Terminal tab title per project
       - Sequential-thinking MCP server (optional)
+      - DevRadar code analyzer for Line 3 LOC widget (optional)
       - Sensible permission allowlist (~50 read-only commands)
       - Windows Terminal font configured to JetBrainsMono Nerd Font
 
@@ -37,6 +39,9 @@
 .PARAMETER SkipMCP
     Don't register MCP servers.
 
+.PARAMETER SkipDevRadar
+    Don't prompt to install DevRadar (Line 3 LOC widget will stay disabled until installed manually with `npm install -g devradar`).
+
 .EXAMPLE
     .\Install-Claudefy.ps1
 
@@ -49,7 +54,8 @@ param(
     [switch]$Force,
     [switch]$SkipFont,
     [switch]$SkipWindowsTerminal,
-    [switch]$SkipMCP
+    [switch]$SkipMCP,
+    [switch]$SkipDevRadar
 )
 
 $ErrorActionPreference = 'Stop'
@@ -95,10 +101,11 @@ Write-Section "Claudefy Installer - make Claude Code yours"
 Write-Host "  by Hoang Anh Dev - HASOFTWARE" -ForegroundColor DarkGray
 Write-Host "  https://t.me/hasoftware  |  https://github.com/hasoftware/Claudefy" -ForegroundColor DarkGray
 Write-Host ""
-Write-Host "  - Powerline statusLine (2 lines, full info)"
+Write-Host "  - Powerline statusLine (up to 3 lines, full info)"
 Write-Host "  - JetBrainsMono Nerd Font"
 Write-Host "  - Hooks: notification + dynamic tab title + quota alerts"
 Write-Host "  - MCP: sequential-thinking"
+Write-Host "  - DevRadar: optional Line 3 LOC widget (asks before install)"
 Write-Host "  - Permission allowlist"
 
 if (-not (Confirm-Action "`nProceed with install?")) {
@@ -209,6 +216,9 @@ $NF_DOTNET   = [char]0xE77F
 $NF_JAVA     = [char]0xE738
 $NF_RUBY     = [char]0xE739
 $NF_FLUTTER  = [char]0xE28E
+$NF_CODE     = [char]0xF121
+$NF_CUBE     = [char]0xF1B2
+$NF_PIE      = [char]0xF200
 $NF_ARROW    = [char]0xE0B0
 
 function BgUsed([double]$pct, [int]$goodColor = 22) {
@@ -469,9 +479,58 @@ if ($null -ne $tok) {
   $line2 += @{ bg = 24; fg = 15; text = " $NF_HASH $human " }
 }
 
+# === LINE 3: Project DNA (DevRadar — cached by git HEAD, TTL 10min) ======
+$line3 = @()
+if ($cwd -and (Test-Path $cwd) -and (Get-Command devradar -ErrorAction SilentlyContinue)) {
+  $headSha = & git -C $cwd rev-parse HEAD 2>$null
+  $cacheKeyRaw = if ($headSha) { "$cwd|$headSha" } else { $cwd }
+  $cacheKey = $cacheKeyRaw -replace '[\\/:*?"<>|]','_'
+  $cacheFile = "$env:TEMP\claude-devradar-cache-$cacheKey.json"
+  $devradar = $null
+  if (Test-Path $cacheFile) {
+    try {
+      $cache = Get-Content $cacheFile -Raw | ConvertFrom-Json
+      $age = (Get-Date).ToUniversalTime() - ([datetime]$cache.timestamp).ToUniversalTime()
+      if ($age.TotalSeconds -lt 600) { $devradar = $cache.data }
+    } catch {}
+  }
+  if (-not $devradar) {
+    try {
+      $json = & devradar --format json "$cwd" 2>$null
+      if ($json) {
+        $devradar = $json | ConvertFrom-Json
+        @{ timestamp = (Get-Date).ToUniversalTime().ToString('o'); data = $devradar } | ConvertTo-Json -Depth 10 | Set-Content $cacheFile -Encoding UTF8
+      }
+    } catch {}
+  }
+  if ($devradar -and $devradar.summary.codeLines) {
+    if ($devradar.technologies.frameworks -and $devradar.technologies.frameworks.Count -gt 0) {
+      $fwList = ($devradar.technologies.frameworks -join [char]0x00B7)
+      $line3 += @{ bg = 60; fg = 15; text = " $NF_CUBE $fwList " }
+    }
+
+    $loc = [int]$devradar.summary.codeLines
+    $locStr = if ($loc -ge 1e6) { "{0:N1}M" -f ($loc/1e6) }
+              elseif ($loc -ge 1e3) { "{0:N1}k" -f ($loc/1e3) }
+              else { "$loc" }
+    $line3 += @{ bg = 23; fg = 15; text = " $NF_CODE $locStr Lines " }
+
+    $totalLines = [double]$devradar.summary.totalLines
+    if ($totalLines -gt 0) {
+      $ratio = [math]::Round(([double]$devradar.summary.codeLines / $totalLines) * 100)
+      $line3 += @{ bg = 25; fg = 15; text = " $NF_PIE $ratio% code " }
+    }
+  }
+}
+
 $out1 = RenderPowerline $line1
 $out2 = RenderPowerline $line2
-[Console]::Out.Write("$out1`n$out2")
+if ($line3.Count -gt 0) {
+  $out3 = RenderPowerline $line3
+  [Console]::Out.Write("$out1`n$out2`n$out3")
+} else {
+  [Console]::Out.Write("$out1`n$out2")
+}
 '@
 
 $statuslinePath = Join-Path $claudeDir 'statusline-command.ps1'
@@ -713,7 +772,40 @@ if (-not $SkipMCP) {
 }
 
 # ============================================================================
-# 7. Done
+# 7. DevRadar (optional — powers Line 3 LOC widget)
+# ============================================================================
+if (-not $SkipDevRadar) {
+    Write-Section "7. DevRadar (optional — Line 3 LOC widget)"
+    $devradarCmd = Get-Command devradar -ErrorAction SilentlyContinue
+    if ($devradarCmd) {
+        Write-Ok "Already installed: $($devradarCmd.Source)"
+    } elseif (-not $nodeCmd) {
+        Write-Warn "npm not available — skipping. Install Node.js then run: npm install -g devradar"
+    } else {
+        Write-Info "DevRadar is a code analyzer (LOC, languages, frameworks)."
+        Write-Info "Powers Line 3 of the statusLine. Repo: https://github.com/hasoftware/DevRadar"
+        if (Confirm-Action "Install DevRadar globally via npm now?") {
+            try {
+                & npm install -g devradar 2>&1 | ForEach-Object { Write-Info $_ }
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Ok "DevRadar installed — Line 3 will show after next message"
+                } else {
+                    Write-Warn "npm returned $LASTEXITCODE — install manually: npm install -g devradar"
+                }
+            } catch {
+                Write-Warn "Failed: $_"
+            }
+        } else {
+            Write-Info "Skipped. To enable Line 3 later, run: npm install -g devradar"
+        }
+    }
+} else {
+    Write-Section "7. DevRadar"
+    Write-Info "Skipped (-SkipDevRadar)"
+}
+
+# ============================================================================
+# 8. Done
 # ============================================================================
 Write-Section "Install complete!"
 Write-Host ""

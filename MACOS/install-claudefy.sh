@@ -8,7 +8,7 @@
 # Repository : https://github.com/hasoftware/Claudefy
 #
 # Usage:
-#   ./install-claudefy.sh [--force] [--skip-font] [--skip-mcp]
+#   ./install-claudefy.sh [--force] [--skip-font] [--skip-mcp] [--skip-devradar]
 #
 set -e
 export LANG=en_US.UTF-8
@@ -19,11 +19,13 @@ export LANG=en_US.UTF-8
 FORCE=0
 SKIP_FONT=0
 SKIP_MCP=0
+SKIP_DEVRADAR=0
 for arg in "$@"; do
   case "$arg" in
-    --force)     FORCE=1 ;;
-    --skip-font) SKIP_FONT=1 ;;
-    --skip-mcp)  SKIP_MCP=1 ;;
+    --force)         FORCE=1 ;;
+    --skip-font)     SKIP_FONT=1 ;;
+    --skip-mcp)      SKIP_MCP=1 ;;
+    --skip-devradar) SKIP_DEVRADAR=1 ;;
     -h|--help)
       sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
@@ -71,8 +73,9 @@ section "Claudefy Installer (macOS) - make Claude Code yours"
 echo "  by Hoang Anh Dev - HASOFTWARE"
 echo "  https://t.me/hasoftware  |  https://github.com/hasoftware/Claudefy"
 echo
-echo "  - Powerline statusLine (2 lines)"
+echo "  - Powerline statusLine (up to 3 lines)"
 echo "  - JetBrainsMono Nerd Font (via Homebrew cask)"
+echo "  - DevRadar: optional Line 3 LOC widget (asks before install)"
 echo "  - Hooks: notification + dynamic tab title + quota alerts"
 echo "  - MCP: sequential-thinking"
 echo "  - Permission allowlist"
@@ -210,6 +213,30 @@ else
   else
     claude mcp add sequential-thinking --scope user -- npx -y '@modelcontextprotocol/server-sequential-thinking' >/dev/null 2>&1
     ok "Added"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 6. DevRadar (optional - powers Line 3 LOC widget)
+# ---------------------------------------------------------------------------
+section "6. DevRadar (optional - Line 3 LOC widget)"
+if [ "$SKIP_DEVRADAR" = "1" ]; then
+  info "Skipped (--skip-devradar)"
+elif have devradar; then
+  ok "Already installed: $(command -v devradar)"
+elif ! have npm; then
+  warn "npm not available - skipping. Install Node.js then run: npm install -g devradar"
+else
+  info "DevRadar is a code analyzer (LOC, languages, frameworks)."
+  info "Powers Line 3 of the statusLine. Repo: https://github.com/hasoftware/DevRadar"
+  if confirm "Install DevRadar globally via npm now?"; then
+    if npm install -g devradar; then
+      ok "DevRadar installed - Line 3 will show after next message"
+    else
+      warn "npm install failed - try manually: npm install -g devradar"
+    fi
+  else
+    info "Skipped. To enable Line 3 later, run: npm install -g devradar"
   fi
 fi
 

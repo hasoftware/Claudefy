@@ -54,7 +54,7 @@ Màu sắc tự đổi theo ngưỡng. Dưới 50 phần trăm là xanh, từ 50
 
 ## Tính năng
 
-- Thanh statusLine hai dòng với Powerline, runtime, git, PR, CI, quota, cost, tokens, đồng hồ Hà Nội
+- Thanh statusLine 2-3 dòng với Powerline, runtime, git, PR, CI, quota, cost, tokens, đồng hồ Hà Nội (dòng 3 hiện tổng dòng code + framework + tỉ lệ code khi đã cài [DevRadar](https://github.com/hasoftware/DevRadar) qua `npm install -g devradar`)
 - Hook Stop: chuông và toast notification khi Claude trả lời xong, kèm cảnh báo gấp khi quota gần hết
 - Hook SessionStart: tab terminal tự đổi tên thành tên project
 - Mười theme màu chọn sẵn (chỉ Windows): One Half Dark, Dracula, Tokyo Night, Catppuccin Mocha, Nord, Solarized Dark, Gruvbox Dark, Monokai, Synthwave 84, GitHub Dark

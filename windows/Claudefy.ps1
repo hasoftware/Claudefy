@@ -478,7 +478,7 @@ function Show-About {
     Write-Host "  Components installed by this kit:" -ForegroundColor Cyan
     Write-Host ""
     $items = @(
-        @{ name = 'statusline-command.ps1'; desc = 'Powerline 2-line statusLine'; path = (Join-Path $claudeDir 'statusline-command.ps1') }
+        @{ name = 'statusline-command.ps1'; desc = 'Powerline 2-3 line statusLine (Line 3 needs DevRadar)'; path = (Join-Path $claudeDir 'statusline-command.ps1') }
         @{ name = 'notify-stop.ps1';        desc = 'Stop hook (notification + quota alerts)'; path = (Join-Path $claudeDir 'notify-stop.ps1') }
         @{ name = 'set-title.ps1';          desc = 'SessionStart hook (dynamic tab title)'; path = (Join-Path $claudeDir 'set-title.ps1') }
         @{ name = 'settings.json';          desc = 'Claude Code config'; path = (Join-Path $claudeDir 'settings.json') }
