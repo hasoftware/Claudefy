@@ -1,6 +1,24 @@
+<div align="center">
+
 # Claudefy
 
-Bộ công cụ cá nhân hoá Claude Code cho cả Windows, Linux và macOS. Một lần cài đặt cho mọi máy mới, không cần ghi chú lại từng bước.
+### Make Claude Code yours.
+
+A cross-platform toolkit that transforms Claude Code's default status bar into a fully-loaded developer cockpit — with smart notifications, auto-renamed terminal tabs, ten preset themes, and a curated safe-command allowlist.
+
+**One install. Every machine. Every project.**
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
+[![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-blue?style=flat-square)](#installation)
+[![Claude Code](https://img.shields.io/badge/Claude%20Code-Ready-FF6B35?style=flat-square&logo=anthropic)](https://claude.com/claude-code)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](https://github.com/hasoftware/Claudefy/pulls)
+[![Telegram](https://img.shields.io/badge/Telegram-Join-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/hasoftware)
+
+[Quick Start](#quick-start) · [Features](#features) · [Preview](#what-it-looks-like) · [Configuration](#configuration) · [FAQ](#faq)
+
+</div>
+
+---
 
 ```
    ____ _                 _       __
@@ -13,86 +31,94 @@ Bộ công cụ cá nhân hoá Claude Code cho cả Windows, Linux và macOS. M�
        Claudefy v1.0.1  -  make Claude Code yours.
 ```
 
-## Claudefy là gì
+## Why Claudefy
 
-Claudefy là tập hợp script biến thanh trạng thái mặc định của Claude Code thành một bảng điều khiển hai dòng đầy đủ thông tin lập trình, kèm thông báo khi Claude phản hồi xong, tự đặt tên tab terminal theo project, mười theme màu chọn sẵn (chỉ Windows), và một danh sách cho phép lệnh đọc an toàn để bớt phải bấm xác nhận quyền.
+Out of the box, Claude Code ships with a minimal status line. That works — until you find yourself asking:
 
-Có thể hình dung Claudefy như phiên bản đã trang điểm của Claude Code. Cài một lần, mỗi project bạn mở thanh thông tin sẽ tự đổi theo.
+- How much context do I have left?
+- Am I about to blow through my 5-hour quota?
+- Is the CI passing on my open PR?
+- How much has this session cost so far?
+- Which project am I even in right now?
 
-## Demo thanh statusLine
+Claudefy answers all of these at a glance, without leaving the chat. It is the productivity layer Claude Code is missing, and it installs in about thirty seconds.
 
-Khi đang code trong một project Node.js có git, bạn sẽ thấy hai dòng như sau ở dưới khung chat Claude Code:
+## What it looks like
+
+When you open Claude Code in a Node.js project with git, you will see this beneath the chat window:
 
 ```
  my-project    main 12  3d   Node 22.19.0    #42    Opus 4.7   01:33 ICT (46m)
  Context: 84%    5h: 24% 05:40    7d: 17%    $8.42    +616 -215    164.3k
 ```
 
-Dòng một là nơi bạn đang ở:
+**Line one — where you are**
 
-| Vị trí | Ý nghĩa |
+| Segment | Meaning |
 |---|---|
-| my-project | Tên thư mục project |
-| main 12 3d | Branch hiện tại, 12 file thay đổi chưa commit, commit gần nhất cách đây 3 ngày |
-| Node 22.19.0 | Runtime tự nhận theo manifest |
-| #42 | Pull request số 42 đang mở, dấu chọn nghĩa là CI pass |
-| Opus 4.7 | Model Claude đang dùng |
-| 01:33 ICT (46m) | Đồng hồ Hà Nội và thời lượng session |
+| `my-project` | Current project name |
+| `main 12 3d` | Branch, 12 uncommitted changes, last commit 3 days ago |
+| `Node 22.19.0` | Runtime auto-detected from your manifest |
+| `#42` | Open PR number 42, checkmark means CI is green |
+| `Opus 4.7` | Active Claude model |
+| `01:33 ICT (46m)` | Hanoi clock and session duration |
 
-Dòng hai là chi phí đã tiêu:
+**Line two — what you have spent**
 
-| Vị trí | Ý nghĩa |
+| Segment | Meaning |
 |---|---|
-| Context: 84% | Cửa sổ context còn lại |
-| 5h: 24% 05:40 | Quota 5 tiếng và giờ reset |
-| 7d: 17% | Quota 7 ngày |
-| $8.42 | Chi phí session hiện tại |
-| +616 -215 | Số dòng đã thêm và xoá |
-| 164.3k | Tổng số token |
+| `Context: 84%` | Remaining context window |
+| `5h: 24% 05:40` | 5-hour quota usage and reset time |
+| `7d: 17%` | 7-day quota usage |
+| `$8.42` | Current session cost |
+| `+616 -215` | Lines added and removed |
+| `164.3k` | Total tokens |
 
-Màu sắc tự đổi theo ngưỡng. Dưới 50 phần trăm là xanh, từ 50 tới 80 phần trăm là cam, trên 80 phần trăm là đỏ.
+Colors shift dynamically as thresholds are crossed: green below 50 percent, orange from 50 to 80 percent, red above 80 percent. You always know when to slow down.
 
-## Tính năng
+## Features
 
-- Thanh statusLine 2-3 dòng với Powerline, runtime, git, PR, CI, quota, cost, tokens, đồng hồ Hà Nội (dòng 3 hiện tổng dòng code + framework + tỉ lệ code khi đã cài [DevRadar](https://github.com/hasoftware/DevRadar) qua `npm install -g devradar`)
-- Hook Stop: chuông và toast notification khi Claude trả lời xong, kèm cảnh báo gấp khi quota gần hết
-- Hook SessionStart: tab terminal tự đổi tên thành tên project
-- Mười theme màu chọn sẵn (chỉ Windows): One Half Dark, Dracula, Tokyo Night, Catppuccin Mocha, Nord, Solarized Dark, Gruvbox Dark, Monokai, Synthwave 84, GitHub Dark
-- Allowlist khoảng năm mươi lệnh đọc an toàn để bớt bấm xác nhận quyền
-- MCP server sequential-thinking để Claude suy nghĩ có cấu trúc hơn
-- Tự cài JetBrainsMono Nerd Font qua winget, brew hoặc tải về thư mục font
+**Powerline status bar (2 to 3 lines)**
+Runtime detection, git state, open PRs, CI status, quota usage, session cost, token totals, and a Hanoi clock. A third line appears when [DevRadar](https://github.com/hasoftware/DevRadar) is installed (`npm install -g devradar`), showing total lines of code, detected framework, and code ratio.
 
-## Cấu trúc repository
+**Stop hook with notifications**
+Plays a chime and shows a native toast when Claude finishes responding. Upgrades to an urgent alert when your quota is nearly exhausted, so you never miss a long-running task.
 
-```
-Claudefy/
-  windows/        cho Windows 10 và 11, viết bằng PowerShell
-  Linux/          cho mọi distro Linux, viết bằng bash
-  MACOS/          cho macOS, viết bằng bash với Homebrew và osascript
-```
+**SessionStart hook**
+Automatically renames your terminal tab to match the project. No more hunting through five identical tabs to find the right one.
 
-Cả ba có chung tập tính năng cốt lõi. Khác biệt: cách cài font, cách hiện notification, và menu Theme chỉ có ở phiên bản Windows do mỗi terminal trên Linux và macOS có cách cấu hình màu khác nhau.
+**Ten preset color themes (Windows)**
+One Half Dark, Dracula, Tokyo Night, Catppuccin Mocha, Nord, Solarized Dark, Gruvbox Dark, Monokai, Synthwave 84, GitHub Dark. Swap between them from the Theme menu in seconds.
 
-## Yêu cầu chung
+**Safe-command allowlist**
+About fifty read-only commands pre-approved so you stop clicking "confirm" for harmless operations like `ls`, `cat`, `git status`, and the like.
+
+**MCP sequential-thinking server**
+Bundled and pre-wired so Claude can reason through complex problems with more structure.
+
+**Automatic font installation**
+JetBrainsMono Nerd Font installed via winget, brew, or direct download depending on your platform.
+
+## Installation
+
+### Requirements
 
 - Claude Code CLI
-- Một terminal hỗ trợ font Nerd Font (Windows Terminal, GNOME Terminal, iTerm2, Alacritty, Kitty)
-- Khuyến nghị thêm: git, Node.js, gh CLI đã đăng nhập
+- A terminal with Nerd Font support (Windows Terminal, GNOME Terminal, iTerm2, Alacritty, Kitty)
+- Recommended: git, Node.js, and the GitHub CLI (`gh`) authenticated
 
-Yêu cầu riêng cho từng nền tảng nằm trong README của từng thư mục con.
+### Quick start
 
-## Cài đặt
-
-### Windows
+**Windows**
 
 ```powershell
 cd windows
 .\Claudefy.ps1
 ```
 
-Hoặc bấm hai lần vào Claudefy.cmd. Xem windows/README.md để biết chi tiết.
+Or double-click `Claudefy.cmd`. See `windows/README.md` for details.
 
-### Linux
+**Linux**
 
 ```bash
 cd Linux
@@ -100,9 +126,9 @@ chmod +x claudefy.sh install-claudefy.sh lib/*.sh
 ./claudefy.sh
 ```
 
-Xem Linux/README.md để biết chi tiết.
+See `Linux/README.md` for details.
 
-### macOS
+**macOS**
 
 ```bash
 cd MACOS
@@ -110,39 +136,86 @@ chmod +x claudefy.sh install-claudefy.sh lib/*.sh
 ./claudefy.sh
 ```
 
-Xem MACOS/README.md để biết chi tiết.
+See `MACOS/README.md` for details.
 
-## Menu Claudefy
+## The Claudefy menu
 
-Trên Windows menu có bốn lựa chọn Install, Reset, Theme, About. Trên Linux và macOS menu có ba lựa chọn Install, Reset, About.
+On Windows the menu offers four options: Install, Reset, Theme, About. On Linux and macOS the menu offers three: Install, Reset, About.
 
-| Option | Hành động |
+| Option | Action |
 |---|---|
-| Install | Cài đặt toàn bộ kit |
-| Reset | Gỡ bỏ kit, giữ font và các trường khác trong settings.json |
-| Theme | Đổi color scheme Windows Terminal (chỉ Windows) |
-| About | Hiển thị thông tin phiên bản, file đã cài, tác giả |
+| Install | Installs the full kit |
+| Reset | Removes the kit, keeping fonts and other unrelated `settings.json` fields |
+| Theme | Switches Windows Terminal color scheme (Windows only) |
+| About | Shows version, installed files, and author |
 
-## Tinh chỉnh
+## Repository structure
 
-Mọi file Claudefy ghi ra đều nằm trong `~/.claude/` (Linux, macOS) hoặc `%USERPROFILE%\.claude\` (Windows). Trước khi sửa bất kỳ file nào, installer luôn tạo bản sao lưu với hậu tố `.backup-<dấu thời gian>`.
+```
+Claudefy/
+  windows/        For Windows 10 and 11, written in PowerShell
+  Linux/          For any Linux distribution, written in bash
+  MACOS/          For macOS, written in bash with Homebrew and osascript
+```
 
-Để chỉnh ngưỡng cảnh báo, mở file `notify-stop.ps1` hoặc `notify-stop.sh` và sửa các biến `T_5H`, `T_7D`, `T_OPUS_7D`, `T_CONTEXT`, `T_COST_USD` ở đầu file.
+All three share the same core feature set. Platform-specific differences are limited to font installation, notification delivery, and the Theme menu (Windows only, since color schemes work differently across Linux and macOS terminals).
 
-Để đổi múi giờ hiển thị, mở file `statusline-command.*` và đổi giá trị `7` trong hai chỗ `AddHours(7)` (Windows) hoặc `25200` tức `7*3600` giây (Linux, macOS) sang múi giờ của bạn.
+## Configuration
 
-## Liên hệ
+Everything Claudefy writes lives under `~/.claude/` on Linux and macOS, or `%USERPROFILE%\.claude\` on Windows. Before modifying any file, the installer creates a timestamped backup with the suffix `.backup-<timestamp>`, so you can always roll back.
 
-Tác giả: Hoàng Anh Dev
+**Notification thresholds**
 
-Admin: HASOFTWARE
+Open `notify-stop.ps1` (Windows) or `notify-stop.sh` (Linux, macOS) and adjust these variables at the top of the file:
 
-Telegram: https://t.me/hasoftware
+| Variable | Purpose |
+|---|---|
+| `T_5H` | 5-hour quota warning threshold |
+| `T_7D` | 7-day quota warning threshold |
+| `T_OPUS_7D` | 7-day Opus quota warning threshold |
+| `T_CONTEXT` | Context window warning threshold |
+| `T_COST_USD` | Session cost warning threshold |
 
-Repository: https://github.com/hasoftware/Claudefy
+**Time zone**
 
-Bug hoặc đóng góp xin mở issue hoặc pull request trên repository. Trao đổi nhanh vào Telegram channel.
+Open `statusline-command.*` and change the value `7` in both occurrences of `AddHours(7)` (Windows) or `25200` (which equals `7 * 3600` seconds, on Linux and macOS) to your local UTC offset.
 
-## Giấy phép
+## FAQ
 
-MIT License. Tự do dùng, sửa, phân phối, kể cả cho mục đích thương mại. Chỉ cần giữ lại file LICENSE.
+**Does Claudefy modify my existing Claude Code config?**
+Yes, but safely. Every file is backed up with a timestamped suffix before any change. The Reset option restores everything except your fonts.
+
+**Can I use this without DevRadar?**
+Absolutely. DevRadar is optional. The third status line only appears when DevRadar is installed; the first two lines work regardless.
+
+**Why is the Theme menu only on Windows?**
+Windows Terminal exposes a clean JSON config that we can patch reliably. Linux and macOS terminals (GNOME Terminal, iTerm2, Alacritty, Kitty, and others) each handle colors differently, so a unified theme switcher is not feasible. You can still apply any theme you like manually.
+
+**Does it work with non-English locales?**
+Yes. Status line output uses neutral ASCII and Powerline glyphs. The clock label `ICT` reflects the bundled time zone and can be changed in `statusline-command.*`.
+
+**How do I uninstall?**
+Run the script again and pick Reset. All Claudefy-installed files are removed and your original `settings.json` is restored from backup.
+
+## Contributing
+
+Bug reports, feature requests, and pull requests are welcome. For quick discussion, join the Telegram channel below. For anything that touches behavior across platforms, please open an issue first so we can keep Windows, Linux, and macOS in sync.
+
+## Contact
+
+- Author: Hoang Anh Dev
+- Organization: HASOFTWARE
+- Telegram: [t.me/hasoftware](https://t.me/hasoftware)
+- Repository: [github.com/hasoftware/Claudefy](https://github.com/hasoftware/Claudefy)
+
+## License
+
+MIT. Free to use, modify, and distribute, including for commercial purposes. Just keep the `LICENSE` file.
+
+---
+
+<div align="center">
+
+If Claudefy saves you time, consider giving it a star. It helps other developers find the project.
+
+</div>
