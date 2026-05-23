@@ -414,7 +414,7 @@ fi
 # Turns (from transcript)
 tp=$(get '.transcript_path')
 if [ -n "$tp" ] && [ -f "$tp" ]; then
-  turns=$(grep -c '"type":"human"' "$tp" 2>/dev/null)
+  turns=$(grep -c '"type":"user"' "$tp" 2>/dev/null)
   if [ "$turns" -gt 0 ] 2>/dev/null; then
     add_l2 24 15 " $'\xef\x81\xb5' $turns turns "
   fi

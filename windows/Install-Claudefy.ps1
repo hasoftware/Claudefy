@@ -536,7 +536,7 @@ if ($null -ne $tok) {
 # Turns (from transcript)
 $tp = $d.transcript_path
 if ($tp -and (Test-Path $tp)) {
-  $turns = (Select-String -Path $tp -Pattern '"type":"human"' -SimpleMatch | Measure-Object).Count
+  $turns = (Select-String -Path $tp -Pattern '"type":"user"' -SimpleMatch | Measure-Object).Count
   if ($turns -gt 0) {
     $line2 += @{ bg = 24; fg = 15; text = " $([char]0xF075) $turns turns " }
   }
