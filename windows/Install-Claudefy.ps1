@@ -419,6 +419,51 @@ if ($null -ne $durMs) {
 }
 $line1 += @{ bg = 236; fg = 15; text = " $NF_CLOCK $timeStr " }
 
+# Claudefy update check (cached 24h)
+$CLAUDEFY_VER = '1.2.0'
+$updateAvail = $null
+try {
+  $ucFile = "$env:TEMP\claudefy-update-check.json"
+  $latestVer = $null; $needCheck = $true
+  if (Test-Path $ucFile) {
+    $uc = Get-Content $ucFile -Raw | ConvertFrom-Json
+    $ucAge = (Get-Date).ToUniversalTime() - ([datetime]$uc.timestamp).ToUniversalTime()
+    if ($ucAge.TotalSeconds -lt 86400) { $needCheck = $false; $latestVer = $uc.latest_version }
+  }
+  if ($needCheck) {
+    $rel = Invoke-RestMethod 'https://api.github.com/repos/hasoftware/Claudefy/releases/latest' -Headers @{'User-Agent'='Claudefy'} -TimeoutSec 3 -ErrorAction Stop
+    $latestVer = $rel.tag_name -replace '^v',''
+    @{ timestamp = (Get-Date).ToUniversalTime().ToString('o'); latest_version = $latestVer } | ConvertTo-Json | Set-Content $ucFile -Encoding UTF8
+  }
+  if ($latestVer -and ([version]$latestVer -gt [version]$CLAUDEFY_VER)) { $updateAvail = $latestVer }
+} catch {}
+if ($updateAvail) {
+  $line1 += @{ bg = 166; fg = 15; text = " $([char]0x2B06) v$updateAvail " }
+}
+
+# .env safety check (cached 5min)
+$envWarning = $false
+if ($cwd -and (Test-Path $cwd)) {
+  $envCK = ($cwd) -replace '[\\/:*?"<>|]','_'
+  $envCF = "$env:TEMP\claudefy-env-$envCK.txt"
+  $needEC = $true
+  if (Test-Path $envCF) {
+    $ecAge = (Get-Date).ToUniversalTime() - (Get-Item $envCF).LastWriteTimeUtc
+    if ($ecAge.TotalSeconds -lt 300) { $needEC = $false; $envWarning = (Get-Content $envCF -Raw).Trim() -eq '1' }
+  }
+  if ($needEC) {
+    $envFs = Get-ChildItem $cwd -Filter '.env*' -File -ErrorAction SilentlyContinue
+    foreach ($ef in $envFs) {
+      $ign = & git -C $cwd check-ignore $ef.Name 2>$null
+      if (-not $ign) { $envWarning = $true; break }
+    }
+    Set-Content $envCF -Value $(if ($envWarning) {'1'} else {'0'}) -Encoding UTF8
+  }
+}
+if ($envWarning) {
+  $line1 += @{ bg = 88; fg = 15; text = " $([char]0x26A0) .env " }
+}
+
 # === LINE 2: Resource usage ==============================================
 $line2 = @()
 
@@ -439,15 +484,24 @@ if ($null -ne $fh) {
 }
 
 $sd = $d.rate_limits.seven_day.used_percentage
+$sdLabel = "7d"
+$sdReset = $d.rate_limits.seven_day.resets_at
+if ($null -ne $sdReset) {
+  try {
+    $nowUnix = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    $remDays = [math]::Ceiling(([long]$sdReset - $nowUnix) / 86400.0)
+    if ($remDays -ge 1 -and $remDays -le 7) { $sdLabel = "${remDays}d" }
+  } catch {}
+}
 if ($null -ne $sd) {
   $bg = BgUsed ([double]$sd) 28
-  $line2 += @{ bg = $bg; fg = 15; text = (" $NF_CAL 7d: {0:N0}% " -f [double]$sd) }
+  $line2 += @{ bg = $bg; fg = 15; text = (" $NF_CAL ${sdLabel}: {0:N0}% " -f [double]$sd) }
 }
 
 $op = $d.rate_limits.seven_day_opus.used_percentage
 if ($null -ne $op) {
   $bg = BgUsed ([double]$op) 65
-  $line2 += @{ bg = $bg; fg = 15; text = (" $NF_STAR Opus 7d: {0:N0}% " -f [double]$op) }
+  $line2 += @{ bg = $bg; fg = 15; text = (" $NF_STAR Opus ${sdLabel}: {0:N0}% " -f [double]$op) }
 }
 
 $cost = $d.cost.total_cost_usd
@@ -477,6 +531,15 @@ if ($null -ne $tok) {
            elseif ($tok -ge 1e3) { ("{0:N1}k" -f ($tok/1e3)) }
            else { ("{0:N0}" -f $tok) }
   $line2 += @{ bg = 24; fg = 15; text = " $NF_HASH $human " }
+}
+
+# Turns (from transcript)
+$tp = $d.transcript_path
+if ($tp -and (Test-Path $tp)) {
+  $turns = (Select-String -Path $tp -Pattern '"type":"human"' -SimpleMatch | Measure-Object).Count
+  if ($turns -gt 0) {
+    $line2 += @{ bg = 24; fg = 15; text = " $([char]0xF075) $turns turns " }
+  }
 }
 
 # === LINE 3: Project DNA (DevRadar — cached by git HEAD, TTL 10min) ======
@@ -523,13 +586,19 @@ if ($cwd -and (Test-Path $cwd) -and (Get-Command devradar -ErrorAction SilentlyC
   }
 }
 
+# === LINE 4: Branding ======================================================
+$line4 = @()
+$line4 += @{ bg = 237; fg = 75; text = " Claudefy v$CLAUDEFY_VER " }
+$line4 += @{ bg = 237; fg = 208; text = " Author: HoangAnhDev " }
+
 $out1 = RenderPowerline $line1
 $out2 = RenderPowerline $line2
+$out4 = RenderPowerline $line4
 if ($line3.Count -gt 0) {
   $out3 = RenderPowerline $line3
-  [Console]::Out.Write("$out1`n$out2`n$out3")
+  [Console]::Out.Write("$out1`n$out2`n$out3`n$out4")
 } else {
-  [Console]::Out.Write("$out1`n$out2")
+  [Console]::Out.Write("$out1`n$out2`n$out4")
 }
 '@
 

@@ -28,7 +28,7 @@ A cross-platform toolkit that transforms Claude Code's default status bar into a
   \____|_|\__,_|\__,_|\__,_|\___|_|  \__, |
                                      |___/
 
-       Claudefy v1.0.1  -  make Claude Code yours.
+       Claudefy v1.2.0  -  make Claude Code yours.
 ```
 
 ## Why Claudefy

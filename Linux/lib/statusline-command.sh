@@ -35,6 +35,7 @@ ctx=$(get '.context_window.remaining_percentage')
 fh=$(get '.rate_limits.five_hour.used_percentage')
 fh_reset=$(get '.rate_limits.five_hour.resets_at')
 sd=$(get '.rate_limits.seven_day.used_percentage')
+sd_reset=$(get '.rate_limits.seven_day.resets_at')
 op=$(get '.rate_limits.seven_day_opus.used_percentage')
 
 cost=$(get '.cost.total_cost_usd')
@@ -295,6 +296,76 @@ if [ "$dur_ms" -gt 0 ] 2>/dev/null; then
 fi
 add_l1 236 15 " $NF_CLOCK $time_str "
 
+# Claudefy update check (cached 24h)
+CLAUDEFY_VER='1.2.0'
+update_avail=""
+uc_file="/tmp/claudefy-update-check.json"
+latest_ver=""
+need_check=true
+if [ -f "$uc_file" ]; then
+  uc_ts=$(jq -r '.timestamp // empty' "$uc_file" 2>/dev/null)
+  if [ -n "$uc_ts" ]; then
+    uc_age=$(( $(date -u +%s) - $(date -u -d "$uc_ts" +%s 2>/dev/null) ))
+    if [ "$uc_age" -lt 86400 ] 2>/dev/null && [ "$uc_age" -ge 0 ] 2>/dev/null; then
+      need_check=false
+      latest_ver=$(jq -r '.latest_version // empty' "$uc_file" 2>/dev/null)
+    fi
+  fi
+fi
+if $need_check && command -v curl >/dev/null 2>&1; then
+  api_resp=$(curl -s --max-time 3 -H 'User-Agent: Claudefy' 'https://api.github.com/repos/hasoftware/Claudefy/releases/latest' 2>/dev/null)
+  if [ -n "$api_resp" ]; then
+    latest_ver=$(echo "$api_resp" | jq -r '.tag_name // empty' 2>/dev/null | sed 's/^v//')
+    if [ -n "$latest_ver" ]; then
+      jq -n --arg v "$latest_ver" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{timestamp:$t, latest_version:$v}' > "$uc_file" 2>/dev/null
+    fi
+  fi
+fi
+ver_gt() {
+  local IFS=.; local i; local a=($1) b=($2)
+  for ((i=0; i<${#a[@]} || i<${#b[@]}; i++)); do
+    local x=${a[i]:-0} y=${b[i]:-0}
+    [ "$x" -gt "$y" ] 2>/dev/null && return 0
+    [ "$x" -lt "$y" ] 2>/dev/null && return 1
+  done
+  return 1
+}
+if [ -n "$latest_ver" ] && ver_gt "$latest_ver" "$CLAUDEFY_VER"; then
+  update_avail="$latest_ver"
+fi
+if [ -n "$update_avail" ]; then
+  add_l1 166 15 " $'\xe2\xac\x86' v$update_avail "
+fi
+
+# .env safety check (cached 5min)
+env_warning=false
+if [ -n "$cwd" ] && [ -d "$cwd" ]; then
+  env_ck=$(echo "$cwd" | tr '/\\:*?"<>|' '_')
+  env_cf="/tmp/claudefy-env-$env_ck.txt"
+  need_ec=true
+  if [ -f "$env_cf" ]; then
+    ec_mtime=$(stat -c %Y "$env_cf" 2>/dev/null)
+    if [ -n "$ec_mtime" ]; then
+      ec_age=$(( $(date -u +%s) - ec_mtime ))
+      if [ "$ec_age" -lt 300 ] 2>/dev/null && [ "$ec_age" -ge 0 ] 2>/dev/null; then
+        need_ec=false
+        [ "$(cat "$env_cf" 2>/dev/null)" = "1" ] && env_warning=true
+      fi
+    fi
+  fi
+  if $need_ec; then
+    for ef in "$cwd"/.env*; do
+      [ -f "$ef" ] || continue
+      ign=$(git -C "$cwd" check-ignore "$(basename "$ef")" 2>/dev/null)
+      if [ -z "$ign" ]; then env_warning=true; break; fi
+    done
+    if $env_warning; then echo "1" > "$env_cf"; else echo "0" > "$env_cf"; fi
+  fi
+fi
+if $env_warning; then
+  add_l1 88 15 " $'\xe2\x9a\xa0' .env "
+fi
+
 # ===========================================================================
 # LINE 2: Resource usage
 # ===========================================================================
@@ -313,13 +384,22 @@ if [ -n "$fh" ]; then
   txt+=" "
   add_l2 "$bg" 15 "$txt"
 fi
+sd_label="7d"
+if [ -n "$sd_reset" ]; then
+  now_unix=$(date -u +%s)
+  rem_sec=$((sd_reset - now_unix))
+  rem_days=$(( (rem_sec + 86399) / 86400 ))
+  if [ "$rem_days" -ge 1 ] 2>/dev/null && [ "$rem_days" -le 7 ] 2>/dev/null; then
+    sd_label="${rem_days}d"
+  fi
+fi
 if [ -n "$sd" ]; then
   bg=$(bg_used "$sd" 28)
-  add_l2 "$bg" 15 " $NF_CAL 7d: $(pct_fmt "$sd")% "
+  add_l2 "$bg" 15 " $NF_CAL $sd_label: $(pct_fmt "$sd")% "
 fi
 if [ -n "$op" ]; then
   bg=$(bg_used "$op" 65)
-  add_l2 "$bg" 15 " $NF_STAR Opus 7d: $(pct_fmt "$op")% "
+  add_l2 "$bg" 15 " $NF_STAR Opus $sd_label: $(pct_fmt "$op")% "
 fi
 if [ -n "$cost" ]; then
   add_l2 94 15 " $NF_USD \$$(printf '%.2f' "$cost") "
@@ -330,6 +410,15 @@ fi
 total_tok=$((in_tok + out_tok))
 if [ "$total_tok" -gt 0 ] 2>/dev/null; then
   add_l2 24 15 " $NF_HASH $(human_tokens $total_tok) "
+fi
+
+# Turns (from transcript)
+tp=$(get '.transcript_path')
+if [ -n "$tp" ] && [ -f "$tp" ]; then
+  turns=$(grep -c '"type":"human"' "$tp" 2>/dev/null)
+  if [ "$turns" -gt 0 ] 2>/dev/null; then
+    add_l2 24 15 " $'\xef\x81\xb5' $turns turns "
+  fi
 fi
 
 # ===========================================================================
@@ -382,13 +471,23 @@ if [ -n "$cwd" ] && [ -d "$cwd" ] && command -v devradar >/dev/null 2>&1; then
 fi
 
 # ===========================================================================
+# LINE 4: Branding
+# ===========================================================================
+L4_BG=(); L4_FG=(); L4_TEXT=()
+add_l4() { L4_BG+=("$1"); L4_FG+=("$2"); L4_TEXT+=("$3"); }
+
+add_l4 237 75 " Claudefy v$CLAUDEFY_VER "
+add_l4 237 208 " Author: HoangAnhDev "
+
+# ===========================================================================
 # Output
 # ===========================================================================
 line1=$(render_line L1_BG L1_FG L1_TEXT)
 line2=$(render_line L2_BG L2_FG L2_TEXT)
+line4=$(render_line L4_BG L4_FG L4_TEXT)
 if [ "${#L3_BG[@]}" -gt 0 ]; then
   line3=$(render_line L3_BG L3_FG L3_TEXT)
-  printf '%s\n%s\n%s' "$line1" "$line2" "$line3"
+  printf '%s\n%s\n%s\n%s' "$line1" "$line2" "$line3" "$line4"
 else
-  printf '%s\n%s' "$line1" "$line2"
+  printf '%s\n%s\n%s' "$line1" "$line2" "$line4"
 fi
