@@ -24,6 +24,40 @@ get() { echo "$input" | jq -r "$1 // empty" 2>/dev/null; }
 cwd=$(get '.workspace.current_dir'); [ -z "$cwd" ] && cwd=$(get '.cwd')
 project=$(basename "$cwd" 2>/dev/null); [ -z "$project" ] && project='Claude'
 
+# Save session stats
+STATS_FILE="$HOME/.claude/claudefy-stats.jsonl"
+{
+  _proj="$project"; [ -z "$_proj" ] && _proj='unknown'
+  _sid=$(get '.session_id')
+  _model=$(get '.model.id'); [ -z "$_model" ] && _model=$(echo "$input" | jq -r '.model // "unknown"' 2>/dev/null)
+  _cost=$(get '.cost.total_cost_usd'); [ -z "$_cost" ] && _cost=0
+  _dur=$(get '.cost.total_duration_ms'); [ -z "$_dur" ] && _dur=0
+  _ladd=$(get '.cost.total_lines_added'); [ -z "$_ladd" ] && _ladd=0
+  _lrm=$(get '.cost.total_lines_removed'); [ -z "$_lrm" ] && _lrm=0
+  _tin=$(get '.context_window.total_input_tokens'); [ -z "$_tin" ] && _tin=0
+  _tout=$(get '.context_window.total_output_tokens'); [ -z "$_tout" ] && _tout=0
+  _tp=$(get '.transcript_path')
+  _turns=0
+  if [ -n "$_tp" ] && [ -f "$_tp" ]; then
+    _turns=$(grep -c '"type":"user"' "$_tp" 2>/dev/null || echo 0)
+  fi
+  _ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)
+  jq -nc \
+    --arg ts "$_ts" \
+    --arg sid "$_sid" \
+    --arg proj "$_proj" \
+    --arg model "$_model" \
+    --argjson cost "${_cost:-0}" \
+    --argjson dur "${_dur:-0}" \
+    --argjson ladd "${_ladd:-0}" \
+    --argjson lrm "${_lrm:-0}" \
+    --argjson tin "${_tin:-0}" \
+    --argjson tout "${_tout:-0}" \
+    --argjson turns "${_turns:-0}" \
+    '{ts:$ts,sid:$sid,project:$proj,model:$model,cost:$cost,dur_ms:$dur,lines_add:$ladd,lines_rm:$lrm,tok_in:$tin,tok_out:$tout,turns:$turns}' \
+    >> "$STATS_FILE"
+} 2>/dev/null
+
 fh=$(get '.rate_limits.five_hour.used_percentage')
 sd=$(get '.rate_limits.seven_day.used_percentage')
 op=$(get '.rate_limits.seven_day_opus.used_percentage')

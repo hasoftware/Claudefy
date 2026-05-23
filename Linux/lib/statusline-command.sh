@@ -401,6 +401,24 @@ if [ -n "$op" ]; then
   bg=$(bg_used "$op" 65)
   add_l2 "$bg" 15 " $NF_STAR Opus $sd_label: $(pct_fmt "$op")% "
 fi
+# Smart Model Hint — suggest switching to Sonnet when Opus quota is high
+op_hint=""
+if [ -n "$op" ]; then
+  op_hint=$op
+else
+  model_id=$(get '.model.id')
+  if echo "$model_id" | grep -qi 'opus'; then
+    [ -n "$sd" ] && op_hint=$sd
+  fi
+fi
+if [ -n "$op_hint" ]; then
+  op_hint_int=${op_hint%.*}
+  if [ "$op_hint_int" -ge 80 ] 2>/dev/null; then
+    add_l2 88 15 " ${ARROW_RT}Sonnet! "
+  elif [ "$op_hint_int" -ge 60 ] 2>/dev/null; then
+    add_l2 58 15 " ${ARROW_RT}Sonnet? "
+  fi
+fi
 if [ -n "$cost" ]; then
   add_l2 94 15 " $NF_USD \$$(printf '%.2f' "$cost") "
 fi

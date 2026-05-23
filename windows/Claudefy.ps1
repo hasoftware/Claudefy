@@ -513,6 +513,191 @@ function Show-About {
 }
 
 # ============================================================================
+# 5. Stats Dashboard
+# ============================================================================
+function Invoke-Stats {
+    Write-Section "5. Stats Dashboard"
+    $statsFile = Join-Path $env:USERPROFILE '.claude\claudefy-stats.jsonl'
+    if (-not (Test-Path $statsFile)) {
+        Write-Host ""
+        Write-Host "  No stats file found at: $statsFile" -ForegroundColor Yellow
+        Write-Host "  Stats are recorded automatically when Claude Code sessions end." -ForegroundColor DarkGray
+        Write-Host "  Use Claude Code for a while, then check back here." -ForegroundColor DarkGray
+        Pause-Continue
+        return
+    }
+
+    $entries = @()
+    foreach ($line in (Get-Content $statsFile -Encoding UTF8)) {
+        $line = $line.Trim()
+        if ($line.Length -eq 0) { continue }
+        try {
+            $obj = $line | ConvertFrom-Json
+            $entries += $obj
+        } catch { continue }
+    }
+
+    if ($entries.Count -eq 0) {
+        Write-Host ""
+        Write-Host "  Stats file exists but contains no valid entries." -ForegroundColor Yellow
+        Pause-Continue
+        return
+    }
+
+    $now = Get-Date
+    $weekStart = $now.AddDays(-($now.DayOfWeek.value__ % 7)).Date
+    if ($now.DayOfWeek -eq 'Sunday') { $weekStart = $now.Date }
+    $monthStart = Get-Date -Year $now.Year -Month $now.Month -Day 1
+
+    $weekEntries  = @($entries | Where-Object { try { [datetime]$_.ts -ge $weekStart } catch { $false } })
+    $monthEntries = @($entries | Where-Object { try { [datetime]$_.ts -ge $monthStart } catch { $false } })
+
+    # Helper to compute aggregate stats
+    function Get-Agg([array]$data) {
+        $sessions = $data.Count
+        $totalCost = ($data | ForEach-Object { [double]$_.cost } | Measure-Object -Sum).Sum
+        $totalTurns = ($data | ForEach-Object { [int]$_.turns } | Measure-Object -Sum).Sum
+        $totalLinesAdd = ($data | ForEach-Object { [int]$_.lines_add } | Measure-Object -Sum).Sum
+        $totalLinesRm = ($data | ForEach-Object { [int]$_.lines_rm } | Measure-Object -Sum).Sum
+        $totalTokIn = ($data | ForEach-Object { [long]$_.tok_in } | Measure-Object -Sum).Sum
+        $totalTokOut = ($data | ForEach-Object { [long]$_.tok_out } | Measure-Object -Sum).Sum
+        $totalDurMs = ($data | ForEach-Object { [long]$_.dur_ms } | Measure-Object -Sum).Sum
+        return @{
+            Sessions = $sessions; Cost = $totalCost; Turns = $totalTurns
+            LinesAdd = $totalLinesAdd; LinesRm = $totalLinesRm
+            TokIn = $totalTokIn; TokOut = $totalTokOut; DurMs = $totalDurMs
+        }
+    }
+
+    function Format-Duration([long]$ms) {
+        $ts = [TimeSpan]::FromMilliseconds($ms)
+        if ($ts.TotalHours -ge 1) { return "{0:N0}h {1:N0}m" -f [math]::Floor($ts.TotalHours), $ts.Minutes }
+        if ($ts.TotalMinutes -ge 1) { return "{0:N0}m {1:N0}s" -f [math]::Floor($ts.TotalMinutes), $ts.Seconds }
+        return "{0:N0}s" -f $ts.TotalSeconds
+    }
+
+    function Format-Tokens([long]$n) {
+        if ($n -ge 1000000) { return "{0:N1}M" -f ($n / 1000000) }
+        if ($n -ge 1000)    { return "{0:N1}K" -f ($n / 1000) }
+        return "$n"
+    }
+
+    function Show-AggBlock([string]$label, [hashtable]$a) {
+        $border = "+" + ("-" * 56) + "+"
+        Write-Host ""
+        Write-Host "  $border" -ForegroundColor DarkCyan
+        Write-Host "  |  $label" -ForegroundColor Cyan -NoNewline
+        $pad = 54 - $label.Length
+        Write-Host (" " * $pad) -NoNewline; Write-Host "|" -ForegroundColor DarkCyan
+        Write-Host "  $border" -ForegroundColor DarkCyan
+
+        $lines = @(
+            @("  Sessions",  "$($a.Sessions)")
+            @("  Total Cost", "`${0:N4}" -f $a.Cost)
+            @("  Total Time", (Format-Duration $a.DurMs))
+            @("  Turns",      "$($a.Turns)")
+            @("  Lines",      "+$($a.LinesAdd) / -$($a.LinesRm)")
+            @("  Tokens In",  (Format-Tokens $a.TokIn))
+            @("  Tokens Out", (Format-Tokens $a.TokOut))
+        )
+        foreach ($l in $lines) {
+            $k = $l[0]; $v = $l[1]
+            $kPad = 18 - $k.Length
+            $vPad = 56 - 18 - $v.Length - 4
+            if ($vPad -lt 0) { $vPad = 0 }
+            Write-Host "  |" -ForegroundColor DarkCyan -NoNewline
+            Write-Host "$k" -ForegroundColor Gray -NoNewline
+            Write-Host (" " * $kPad) -NoNewline
+            Write-Host "$v" -ForegroundColor White -NoNewline
+            Write-Host (" " * $vPad) -NoNewline
+            Write-Host "  |" -ForegroundColor DarkCyan
+        }
+        Write-Host "  $border" -ForegroundColor DarkCyan
+    }
+
+    $weekAgg  = Get-Agg $weekEntries
+    $monthAgg = Get-Agg $monthEntries
+    $allAgg   = Get-Agg $entries
+
+    Show-AggBlock "This Week" $weekAgg
+    Show-AggBlock "This Month" $monthAgg
+
+    # Model usage breakdown
+    $modelGroups = $entries | Group-Object -Property { $_.model } | Sort-Object Count -Descending
+    $border = "+" + ("-" * 56) + "+"
+    Write-Host ""
+    Write-Host "  $border" -ForegroundColor DarkCyan
+    Write-Host "  |  Model Usage Breakdown" -ForegroundColor Cyan -NoNewline
+    Write-Host (" " * 30) -NoNewline; Write-Host "|" -ForegroundColor DarkCyan
+    Write-Host "  $border" -ForegroundColor DarkCyan
+    foreach ($mg in $modelGroups) {
+        $pct = if ($entries.Count -gt 0) { [math]::Round(($mg.Count / $entries.Count) * 100, 1) } else { 0 }
+        $modelCost = ($mg.Group | ForEach-Object { [double]$_.cost } | Measure-Object -Sum).Sum
+        $info = "{0,-28} {1,4} ({2,5:N1}%)  `${3:N2}" -f $mg.Name, $mg.Count, $pct, $modelCost
+        $pad = 54 - $info.Length
+        if ($pad -lt 0) { $pad = 0 }
+        Write-Host "  |  " -ForegroundColor DarkCyan -NoNewline
+        Write-Host "$info" -ForegroundColor White -NoNewline
+        Write-Host (" " * $pad) -NoNewline
+        Write-Host "|" -ForegroundColor DarkCyan
+    }
+    Write-Host "  $border" -ForegroundColor DarkCyan
+
+    # Top projects by cost
+    $projGroups = $entries | Group-Object -Property { $_.project } |
+        ForEach-Object { [PSCustomObject]@{ Name = $_.Name; Count = $_.Count; Cost = ($_.Group | ForEach-Object { [double]$_.cost } | Measure-Object -Sum).Sum } } |
+        Sort-Object Cost -Descending | Select-Object -First 10
+    Write-Host ""
+    Write-Host "  $border" -ForegroundColor DarkCyan
+    Write-Host "  |  Top Projects by Cost" -ForegroundColor Cyan -NoNewline
+    Write-Host (" " * 31) -NoNewline; Write-Host "|" -ForegroundColor DarkCyan
+    Write-Host "  $border" -ForegroundColor DarkCyan
+    foreach ($pg in $projGroups) {
+        $info = "{0,-30} {1,4} sessions  `${2:N2}" -f $pg.Name, $pg.Count, $pg.Cost
+        $pad = 54 - $info.Length
+        if ($pad -lt 0) { $pad = 0 }
+        Write-Host "  |  " -ForegroundColor DarkCyan -NoNewline
+        Write-Host "$info" -ForegroundColor White -NoNewline
+        Write-Host (" " * $pad) -NoNewline
+        Write-Host "|" -ForegroundColor DarkCyan
+    }
+    Write-Host "  $border" -ForegroundColor DarkCyan
+
+    # Averages
+    $avgCostSession = if ($allAgg.Sessions -gt 0) { $allAgg.Cost / $allAgg.Sessions } else { 0 }
+    $totalLines = $allAgg.LinesAdd + $allAgg.LinesRm
+    $avgCostLine = if ($totalLines -gt 0) { $allAgg.Cost / $totalLines } else { 0 }
+    Write-Host ""
+    Write-Host "  $border" -ForegroundColor DarkCyan
+    Write-Host "  |  Averages (All Time)" -ForegroundColor Cyan -NoNewline
+    Write-Host (" " * 32) -NoNewline; Write-Host "|" -ForegroundColor DarkCyan
+    Write-Host "  $border" -ForegroundColor DarkCyan
+    $avgLines = @(
+        @("  Avg Cost/Session", "`${0:N4}" -f $avgCostSession)
+        @("  Avg Cost/Line",    "`${0:N4}" -f $avgCostLine)
+        @("  Total Sessions",   "$($allAgg.Sessions)")
+        @("  Total Cost",       "`${0:N4}" -f $allAgg.Cost)
+    )
+    foreach ($l in $avgLines) {
+        $k = $l[0]; $v = $l[1]
+        $kPad = 22 - $k.Length
+        $vPad = 56 - 22 - $v.Length - 4
+        if ($vPad -lt 0) { $vPad = 0 }
+        Write-Host "  |" -ForegroundColor DarkCyan -NoNewline
+        Write-Host "$k" -ForegroundColor Gray -NoNewline
+        Write-Host (" " * $kPad) -NoNewline
+        Write-Host "$v" -ForegroundColor Yellow -NoNewline
+        Write-Host (" " * $vPad) -NoNewline
+        Write-Host "  |" -ForegroundColor DarkCyan
+    }
+    Write-Host "  $border" -ForegroundColor DarkCyan
+
+    Write-Host ""
+    Write-Host "  Stats file: $statsFile" -ForegroundColor DarkGray
+    Pause-Continue
+}
+
+# ============================================================================
 # Main menu loop
 # ============================================================================
 function Show-MainMenu {
@@ -525,6 +710,7 @@ function Show-MainMenu {
         Write-Host "    [2] " -NoNewline -ForegroundColor Cyan; Write-Host "Reset to Default"
         Write-Host "    [3] " -NoNewline -ForegroundColor Cyan; Write-Host "Theme for Claude Code"
         Write-Host "    [4] " -NoNewline -ForegroundColor Cyan; Write-Host "About"
+        Write-Host "    [5] " -NoNewline -ForegroundColor Cyan; Write-Host "Stats Dashboard"
         Write-Host ""
         Write-Host "    [Q] " -NoNewline -ForegroundColor DarkGray; Write-Host "Quit" -ForegroundColor DarkGray
         Write-Host ""
@@ -535,6 +721,7 @@ function Show-MainMenu {
             '^2$' { Invoke-Reset }
             '^3$' { Invoke-ThemePicker }
             '^4$' { Show-About }
+            '^5$' { Invoke-Stats }
             '^[Qq]$' { Write-Host "`n  Goodbye!`n" -ForegroundColor Cyan; return }
             default { Write-Host "  Invalid choice." -ForegroundColor Red; Start-Sleep -Milliseconds 800 }
         }

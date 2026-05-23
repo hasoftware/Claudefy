@@ -504,6 +504,21 @@ if ($null -ne $op) {
   $line2 += @{ bg = $bg; fg = 15; text = (" $NF_STAR Opus ${sdLabel}: {0:N0}% " -f [double]$op) }
 }
 
+# Smart Model Hint — suggest switching to Sonnet when Opus quota is high
+$opHint = $null
+if ($null -ne $op) {
+  $opHint = [double]$op
+} elseif ($d.model.id -and "$($d.model.id)" -match 'opus') {
+  if ($null -ne $sd) { $opHint = [double]$sd }
+}
+if ($null -ne $opHint) {
+  if ($opHint -ge 80) {
+    $line2 += @{ bg = 88; fg = 15; text = " $([char]0x2192)Sonnet! " }
+  } elseif ($opHint -ge 60) {
+    $line2 += @{ bg = 58; fg = 15; text = " $([char]0x2192)Sonnet? " }
+  }
+}
+
 $cost = $d.cost.total_cost_usd
 if ($null -ne $cost) {
   $cstr = "{0:N2}" -f [double]$cost
@@ -621,6 +636,33 @@ $T_7D        = 80
 $T_OPUS_7D   = 80
 $T_CONTEXT   = 10
 $T_COST_USD  = 5.0
+
+# Save session stats
+$statsFile = Join-Path $env:USERPROFILE '.claude\claudefy-stats.jsonl'
+try {
+  $project = if ($d.workspace.current_dir) { Split-Path -Leaf $d.workspace.current_dir }
+             elseif ($d.cwd) { Split-Path -Leaf $d.cwd }
+             else { 'unknown' }
+  $tp = $d.transcript_path
+  $turns = 0
+  if ($tp -and (Test-Path $tp)) {
+    $turns = (Select-String -Path $tp -Pattern '"type":"user"' -SimpleMatch | Measure-Object).Count
+  }
+  $stat = [ordered]@{
+    ts       = (Get-Date).ToUniversalTime().ToString('o')
+    sid      = $d.session_id
+    project  = $project
+    model    = if ($d.model.id) { $d.model.id } elseif ($d.model) { "$($d.model)" } else { 'unknown' }
+    cost     = if ($null -ne $d.cost.total_cost_usd) { [math]::Round([double]$d.cost.total_cost_usd, 4) } else { 0 }
+    dur_ms   = if ($null -ne $d.cost.total_duration_ms) { [long]$d.cost.total_duration_ms } else { 0 }
+    lines_add = if ($null -ne $d.cost.total_lines_added) { [int]$d.cost.total_lines_added } else { 0 }
+    lines_rm  = if ($null -ne $d.cost.total_lines_removed) { [int]$d.cost.total_lines_removed } else { 0 }
+    tok_in   = if ($null -ne $d.context_window.total_input_tokens) { [long]$d.context_window.total_input_tokens } else { 0 }
+    tok_out  = if ($null -ne $d.context_window.total_output_tokens) { [long]$d.context_window.total_output_tokens } else { 0 }
+    turns    = $turns
+  }
+  $stat | ConvertTo-Json -Compress | Add-Content -Path $statsFile -Encoding UTF8
+} catch {}
 
 $warnings = @()
 $fh = $d.rate_limits.five_hour.used_percentage

@@ -181,6 +181,171 @@ do_about() {
 }
 
 # ---------------------------------------------------------------------------
+# 4. Stats Dashboard
+# ---------------------------------------------------------------------------
+do_stats() {
+  section "4. Stats Dashboard"
+  STATS_FILE="$HOME/.claude/claudefy-stats.jsonl"
+  if [ ! -f "$STATS_FILE" ]; then
+    echo
+    printf '  %sNo stats file found at: %s%s\n' "$C_YELLOW" "$STATS_FILE" "$C_RESET"
+    printf '  %sStats are recorded automatically when Claude Code sessions end.%s\n' "$C_GRAY" "$C_RESET"
+    pause_continue; return
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    printf '  %s[X] jq is required for stats display.%s\n' "$C_RED" "$C_RESET"
+    pause_continue; return
+  fi
+
+  total=$(wc -l < "$STATS_FILE" | tr -d ' ')
+  if [ "$total" -eq 0 ]; then
+    printf '  %sStats file exists but contains no entries.%s\n' "$C_YELLOW" "$C_RESET"
+    pause_continue; return
+  fi
+
+  # Date boundaries (macOS date syntax)
+  week_start=$(date -v-monday +%Y-%m-%dT00:00:00Z 2>/dev/null || date -d "last monday" +%Y-%m-%dT00:00:00Z 2>/dev/null || echo "1970-01-01T00:00:00Z")
+  month_start=$(date +%Y-%m-01T00:00:00Z)
+
+  draw_border() { printf '  +%s+\n' "$(printf -- '-%.0s' $(seq 1 56))"; }
+
+  draw_header() {
+    draw_border
+    printf '  | %s%-54s%s |\n' "$C_CYAN" "$1" "$C_RESET"
+    draw_border
+  }
+
+  draw_row() {
+    printf '  | %s%-18s%s %s%-33s%s  |\n' "$C_GRAY" "$1" "$C_RESET" "$C_WHITE" "$2" "$C_RESET"
+  }
+
+  show_agg() {
+    local label="$1" filter="$2"
+    if [ "$filter" = "all" ]; then
+      agg=$(jq -s '
+        { sessions: length,
+          cost: (map(.cost // 0) | add // 0),
+          turns: (map(.turns // 0) | add // 0),
+          lines_add: (map(.lines_add // 0) | add // 0),
+          lines_rm: (map(.lines_rm // 0) | add // 0),
+          tok_in: (map(.tok_in // 0) | add // 0),
+          tok_out: (map(.tok_out // 0) | add // 0),
+          dur_ms: (map(.dur_ms // 0) | add // 0) }' "$STATS_FILE")
+    else
+      agg=$(jq -s --arg since "$filter" '
+        [ .[] | select(.ts >= $since) ] |
+        { sessions: length,
+          cost: (map(.cost // 0) | add // 0),
+          turns: (map(.turns // 0) | add // 0),
+          lines_add: (map(.lines_add // 0) | add // 0),
+          lines_rm: (map(.lines_rm // 0) | add // 0),
+          tok_in: (map(.tok_in // 0) | add // 0),
+          tok_out: (map(.tok_out // 0) | add // 0),
+          dur_ms: (map(.dur_ms // 0) | add // 0) }' "$STATS_FILE")
+    fi
+
+    local sessions cost turns ladd lrm tin tout dur
+    sessions=$(echo "$agg" | jq -r '.sessions')
+    cost=$(echo "$agg" | jq -r '.cost | . * 10000 | round / 10000')
+    turns=$(echo "$agg" | jq -r '.turns')
+    ladd=$(echo "$agg" | jq -r '.lines_add')
+    lrm=$(echo "$agg" | jq -r '.lines_rm')
+    tin=$(echo "$agg" | jq -r '.tok_in')
+    tout=$(echo "$agg" | jq -r '.tok_out')
+    dur=$(echo "$agg" | jq -r '.dur_ms')
+
+    # Format duration
+    local dur_s=$((dur / 1000))
+    local dur_str
+    if [ "$dur_s" -ge 3600 ]; then
+      dur_str="$((dur_s / 3600))h $((dur_s % 3600 / 60))m"
+    elif [ "$dur_s" -ge 60 ]; then
+      dur_str="$((dur_s / 60))m $((dur_s % 60))s"
+    else
+      dur_str="${dur_s}s"
+    fi
+
+    # Format tokens
+    fmt_tok() {
+      local n="$1"
+      if [ "$n" -ge 1000000 ]; then
+        awk "BEGIN{printf \"%.1fM\", $n/1000000}"
+      elif [ "$n" -ge 1000 ]; then
+        awk "BEGIN{printf \"%.1fK\", $n/1000}"
+      else
+        echo "$n"
+      fi
+    }
+
+    draw_header "$label"
+    draw_row "Sessions" "$sessions"
+    draw_row "Total Cost" "\$$cost"
+    draw_row "Total Time" "$dur_str"
+    draw_row "Turns" "$turns"
+    draw_row "Lines" "+$ladd / -$lrm"
+    draw_row "Tokens In" "$(fmt_tok "$tin")"
+    draw_row "Tokens Out" "$(fmt_tok "$tout")"
+    draw_border
+  }
+
+  show_agg "This Week" "$week_start"
+  show_agg "This Month" "$month_start"
+
+  # Model usage breakdown
+  echo
+  draw_header "Model Usage Breakdown"
+  jq -s '
+    group_by(.model) | map({
+      model: .[0].model,
+      count: length,
+      cost: (map(.cost // 0) | add // 0)
+    }) | sort_by(-.count) | .[]' "$STATS_FILE" |
+  jq -r --argjson total "$total" '
+    "\(.model)\t\(.count)\t\(.count * 100 / $total | . * 10 | round / 10)\t\(.cost | . * 100 | round / 100)"' |
+  while IFS=$'\t' read -r model count pct mcost; do
+    printf '  | %-28s %4s (%5s%%)  $%-8s  |\n' "$model" "$count" "$pct" "$mcost"
+  done
+  draw_border
+
+  # Top projects by cost
+  echo
+  draw_header "Top Projects by Cost"
+  jq -s '
+    group_by(.project) | map({
+      project: .[0].project,
+      count: length,
+      cost: (map(.cost // 0) | add // 0)
+    }) | sort_by(-.cost) | .[:10] | .[]' "$STATS_FILE" |
+  jq -r '"\(.project)\t\(.count)\t\(.cost | . * 100 | round / 100)"' |
+  while IFS=$'\t' read -r proj count pcost; do
+    printf '  | %-30s %4s sessions  $%-8s  |\n' "$proj" "$count" "$pcost"
+  done
+  draw_border
+
+  # Averages
+  echo
+  draw_header "Averages (All Time)"
+  all_agg=$(jq -s '
+    { sessions: length,
+      cost: (map(.cost // 0) | add // 0),
+      lines: (map((.lines_add // 0) + (.lines_rm // 0)) | add // 0) }' "$STATS_FILE")
+  all_sessions=$(echo "$all_agg" | jq -r '.sessions')
+  all_cost=$(echo "$all_agg" | jq -r '.cost | . * 10000 | round / 10000')
+  all_lines=$(echo "$all_agg" | jq -r '.lines')
+  avg_cost_sess=$(awk "BEGIN{if($all_sessions>0) printf \"%.4f\",$all_cost/$all_sessions; else print \"0\"}")
+  avg_cost_line=$(awk "BEGIN{if($all_lines>0) printf \"%.4f\",$all_cost/$all_lines; else print \"0\"}")
+  printf '  | %s%-20s%s %s%-31s%s  |\n' "$C_GRAY" "Avg Cost/Session" "$C_RESET" "$C_YELLOW" "\$$avg_cost_sess" "$C_RESET"
+  printf '  | %s%-20s%s %s%-31s%s  |\n' "$C_GRAY" "Avg Cost/Line" "$C_RESET" "$C_YELLOW" "\$$avg_cost_line" "$C_RESET"
+  printf '  | %s%-20s%s %s%-31s%s  |\n' "$C_GRAY" "Total Sessions" "$C_RESET" "$C_YELLOW" "$all_sessions" "$C_RESET"
+  printf '  | %s%-20s%s %s%-31s%s  |\n' "$C_GRAY" "Total Cost" "$C_RESET" "$C_YELLOW" "\$$all_cost" "$C_RESET"
+  draw_border
+
+  echo
+  printf '  %sStats file: %s%s\n' "$C_GRAY" "$STATS_FILE" "$C_RESET"
+  pause_continue
+}
+
+# ---------------------------------------------------------------------------
 # Main menu
 # ---------------------------------------------------------------------------
 main_menu() {
@@ -191,6 +356,7 @@ main_menu() {
     printf '    %s[1]%s Install Claudefy\n' "$C_CYAN" "$C_RESET"
     printf '    %s[2]%s Reset to Default\n' "$C_CYAN" "$C_RESET"
     printf '    %s[3]%s About\n' "$C_CYAN" "$C_RESET"
+    printf '    %s[4]%s Stats Dashboard\n' "$C_CYAN" "$C_RESET"
     echo
     printf '    %s[Q]%s Quit\n' "$C_GRAY" "$C_RESET"
     echo
@@ -200,6 +366,7 @@ main_menu() {
       1) do_install ;;
       2) do_reset ;;
       3) do_about ;;
+      4) do_stats ;;
       Q|q) printf '\n  Goodbye!\n\n'; exit 0 ;;
       *) printf '  %sInvalid choice.%s\n' "$C_RED" "$C_RESET"; sleep 1 ;;
     esac
