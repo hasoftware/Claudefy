@@ -36,7 +36,6 @@ done
 # UI helpers
 # ---------------------------------------------------------------------------
 C_CYAN=$'\033[36m'
-C_DCYAN=$'\033[96m'
 C_GREEN=$'\033[32m'
 C_YELLOW=$'\033[33m'
 C_RED=$'\033[31m'
@@ -45,26 +44,34 @@ C_WHITE=$'\033[97m'
 C_RESET=$'\033[0m'
 
 TOTAL_STEPS=6
-CURRENT_STEP=0
 START_TIME=$(date +%s)
+SPIN_PID=""
 
-step_start() {
-  CURRENT_STEP=$((CURRENT_STEP + 1))
-  local filled=$((CURRENT_STEP * 10 / TOTAL_STEPS))
-  local empty=$((10 - filled))
-  local bar=""
-  for i in $(seq 1 $filled); do bar="${bar}█"; done
-  for i in $(seq 1 $empty); do bar="${bar}░"; done
-  printf '\n  %s[%d/%d]%s %s%s%s  %s[%s]%s\n' \
-    "$C_DCYAN" "$CURRENT_STEP" "$TOTAL_STEPS" "$C_RESET" \
-    "$C_WHITE" "$1" "$C_RESET" \
-    "$C_GRAY" "$bar" "$C_RESET"
+start_spin() {
+  local msg="$1"
+  ( while true; do
+      for c in ⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏; do
+        printf '\r  %s%s%s %s   ' "$C_CYAN" "$c" "$C_RESET" "$msg"
+        sleep 0.08
+      done
+    done ) &
+  SPIN_PID=$!
 }
-ok()   { printf '        %s✓%s %s\n' "$C_GREEN" "$C_RESET" "$1"; }
-warn() { printf '        %s!%s %s\n' "$C_YELLOW" "$C_RESET" "$1"; }
-err()  { printf '        %s✗%s %s\n' "$C_RED" "$C_RESET" "$1"; }
-info() { printf '          %s%s%s\n' "$C_GRAY" "$1" "$C_RESET"; }
-step() { printf '        %s> %s%s\n' "$C_CYAN" "$1" "$C_RESET"; }
+
+stop_spin() {
+  local msg="$1" ok="${2:-1}"
+  kill "$SPIN_PID" 2>/dev/null; wait "$SPIN_PID" 2>/dev/null
+  SPIN_PID=""
+  printf '\033[2K\r'
+  if [ "$ok" = "1" ]; then
+    printf '  %s✓%s %s\n' "$C_GREEN" "$C_RESET" "$msg"
+  else
+    printf '  %s!%s %s\n' "$C_YELLOW" "$C_RESET" "$msg"
+  fi
+}
+
+detail() { printf '      %s%s%s\n' "$C_GRAY" "$1" "$C_RESET"; }
+err()    { printf '  %s✗ %s%s\n' "$C_RED" "$1" "$C_RESET"; }
 
 confirm() {
   [ "$FORCE" = "1" ] && return 0
@@ -77,7 +84,6 @@ backup_file() {
   if [ -f "$1" ]; then
     local ts; ts=$(date +'%Y%m%d-%H%M%S')
     cp -p "$1" "$1.backup-$ts"
-    info "Backed up -> $1.backup-$ts"
   fi
 }
 
@@ -88,80 +94,71 @@ echo ""
 printf '  %s██%s %sClaudefy%s — make Claude Code yours.\n' "$C_CYAN" "$C_RESET" "$C_WHITE" "$C_RESET"
 printf '     %shttps://github.com/hasoftware/Claudefy%s\n' "$C_GRAY" "$C_RESET"
 echo ""
-printf '     %s◆ Statusline  ◆ Hooks  ◆ Font  ◆ MCP  ◆ DevRadar%s\n' "$C_DCYAN" "$C_RESET"
+printf '     %s◆ Statusline  ◆ Hooks  ◆ Font  ◆ MCP  ◆ DevRadar%s\n' "$C_CYAN" "$C_RESET"
 echo ""
 confirm "  Proceed?" || { echo "  Cancelled."; exit 0; }
 
 # ---------------------------------------------------------------------------
 # 1. Pre-flight checks
 # ---------------------------------------------------------------------------
-step_start "Pre-flight checks"
+start_spin "Checking requirements..."
 have() { command -v "$1" >/dev/null 2>&1; }
 
-have bash    && ok "bash $(bash --version | head -1 | awk '{print $4}')" || { err "bash not found"; exit 1; }
-have claude  && ok "claude: $(command -v claude)" || { err "Claude Code CLI not found. https://claude.com/claude-code"; exit 1; }
+have bash   || { stop_spin "bash not found" 0; exit 1; }
+have claude || { stop_spin "Claude Code CLI not found" 0; exit 1; }
+have jq     || { stop_spin "jq is required (brew install jq)" 0; exit 1; }
 
-if ! have jq; then
-  warn "jq not installed - attempting to install via Homebrew"
-  if have brew; then brew install jq; else err "Install jq manually (https://stedolan.github.io/jq/)"; exit 1; fi
-fi
-ok "jq: $(jq --version)"
-
-have brew    && ok "brew: $(brew --version | head -1)" || warn "Homebrew not found (font auto-install disabled)"
-have git     && ok "git: $(git --version | awk '{print $3}')" || warn "git not found (git block disabled)"
-have node    && ok "node: $(node --version)" || warn "node not found (MCP cannot run)"
-have gh      && ok "gh: $(gh --version | head -1 | awk '{print $3}')" || warn "gh CLI not found (PR/CI block disabled)"
+tools="bash, claude, jq"
+have git  && tools="$tools, git"
+have node && tools="$tools, node"
+have gh   && tools="$tools, gh"
 
 CLAUDE_DIR="$HOME/.claude"
 mkdir -p "$CLAUDE_DIR"
-ok "Claude dir: $CLAUDE_DIR"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LIB_DIR="$SCRIPT_DIR/lib"
 
 if [ ! -d "$LIB_DIR" ]; then
-  err "lib/ folder not found next to installer."
-  exit 1
+  stop_spin "lib/ folder not found" 0; exit 1
 fi
+stop_spin "Pre-flight — $tools"
 
 # ---------------------------------------------------------------------------
 # 2. Install JetBrainsMono Nerd Font via brew cask
 # ---------------------------------------------------------------------------
-step_start "Nerd Font"
+start_spin "Installing Nerd Font..."
 if [ "$SKIP_FONT" = "1" ]; then
-  info "Skipped (--skip-font)"
-elif ! have brew; then
-  warn "Homebrew not available - skipping font install"
-  info "Install manually: brew install --cask font-jetbrains-mono-nerd-font"
+  stop_spin "Nerd Font — skipped" 0
 else
   if brew list --cask font-jetbrains-mono-nerd-font >/dev/null 2>&1; then
-    ok "Already installed"
+    stop_spin "Nerd Font — already installed"
+  elif have brew; then
+    brew install --cask font-jetbrains-mono-nerd-font >/dev/null 2>&1
+    stop_spin "Nerd Font — installed via Homebrew"
   else
-    step "Installing via Homebrew cask"
-    brew install --cask font-jetbrains-mono-nerd-font
-    ok "Installed"
-    info "Set your terminal font to 'JetBrainsMono Nerd Font' if needed"
+    stop_spin "Nerd Font — brew not found, install manually" 0
   fi
 fi
 
 # ---------------------------------------------------------------------------
 # 3. Copy helper scripts
 # ---------------------------------------------------------------------------
-step_start "Helper scripts"
+start_spin "Writing helper scripts..."
 for name in statusline-command.sh notify-stop.sh set-title.sh; do
   src="$LIB_DIR/$name"
   dst="$CLAUDE_DIR/$name"
-  [ ! -f "$src" ] && { err "Missing $src"; exit 1; }
+  [ ! -f "$src" ] && { stop_spin "Missing $src" 0; exit 1; }
   backup_file "$dst"
   cp -f "$src" "$dst"
   chmod +x "$dst"
-  ok "$name"
 done
+stop_spin "Helper scripts — 3 files written"
 
 # ---------------------------------------------------------------------------
 # 4. Merge Claude Code settings.json
 # ---------------------------------------------------------------------------
-step_start "Settings merge"
+start_spin "Merging settings..."
 SETTINGS="$CLAUDE_DIR/settings.json"
 backup_file "$SETTINGS"
 
@@ -194,7 +191,7 @@ JSON
 )
 
 if [ -f "$SETTINGS" ]; then EXIST=$(cat "$SETTINGS"); else EXIST='{}'; fi
-echo "$EXIST" | jq empty 2>/dev/null || { warn "Could not parse existing settings.json - starting fresh"; EXIST='{}'; }
+echo "$EXIST" | jq empty 2>/dev/null || EXIST='{}'
 
 NEW=$(echo "$EXIST" | jq \
   --arg sl "$SL_PATH" --arg nt "$NT_PATH" --arg tt "$TT_PATH" \
@@ -208,46 +205,45 @@ NEW=$(echo "$EXIST" | jq \
 ')
 echo "$NEW" > "$SETTINGS"
 allow_count=$(echo "$NEW" | jq '.permissions.allow | length')
-ok "settings.json merged ($allow_count allow entries)"
+stop_spin "Settings merged — $allow_count allow entries"
 
 # ---------------------------------------------------------------------------
 # 5. MCP server
 # ---------------------------------------------------------------------------
-step_start "MCP server"
+start_spin "Setting up MCP server..."
 if [ "$SKIP_MCP" = "1" ]; then
-  info "Skipped (--skip-mcp)"
+  stop_spin "MCP server — skipped" 0
 elif ! have node; then
-  warn "Node not found - skipping MCP"
+  stop_spin "MCP server — node not found" 0
 else
   if claude mcp list 2>&1 | grep -q 'sequential-thinking'; then
-    ok "Already configured"
+    stop_spin "MCP server — already configured"
   else
     claude mcp add sequential-thinking --scope user -- npx -y '@modelcontextprotocol/server-sequential-thinking' >/dev/null 2>&1
-    ok "Added"
+    stop_spin "MCP server — added"
   fi
 fi
 
 # ---------------------------------------------------------------------------
 # 6. DevRadar (optional - powers Line 3 LOC widget)
 # ---------------------------------------------------------------------------
-step_start "DevRadar"
 if [ "$SKIP_DEVRADAR" = "1" ]; then
-  info "Skipped (--skip-devradar)"
+  start_spin "DevRadar..."; stop_spin "DevRadar — skipped" 0
 elif have devradar; then
-  ok "Already installed: $(command -v devradar)"
+  start_spin "DevRadar..."; stop_spin "DevRadar — already installed"
 elif ! have npm; then
-  warn "npm not available - skipping. Install Node.js then run: npm install -g devradar"
+  start_spin "DevRadar..."; stop_spin "DevRadar — npm not available" 0
 else
-  info "DevRadar is a code analyzer (LOC, languages, frameworks)."
-  info "Powers Line 3 of the statusLine. Repo: https://github.com/hasoftware/DevRadar"
-  if confirm "Install DevRadar globally via npm now?"; then
-    if npm install -g devradar; then
-      ok "DevRadar installed - Line 3 will show after next message"
+  printf '\n  %s?%s DevRadar powers Line 3 (LOC, frameworks). Install globally?\n' "$C_CYAN" "$C_RESET"
+  if confirm "   "; then
+    start_spin "Installing DevRadar..."
+    if npm install -g devradar >/dev/null 2>&1; then
+      stop_spin "DevRadar — installed"
     else
-      warn "npm install failed - try manually: npm install -g devradar"
+      stop_spin "DevRadar — npm failed" 0
     fi
   else
-    info "Skipped. To enable Line 3 later, run: npm install -g devradar"
+    start_spin "DevRadar..."; stop_spin "DevRadar — skipped" 0
   fi
 fi
 
@@ -256,7 +252,7 @@ fi
 # ---------------------------------------------------------------------------
 ELAPSED=$(( $(date +%s) - START_TIME ))
 echo ""
-printf '  %s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n' "$C_DCYAN" "$C_RESET"
+printf '  %s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n' "$C_CYAN" "$C_RESET"
 echo ""
 printf '  %s✅ All %d steps completed%s in %ds\n' "$C_GREEN" "$TOTAL_STEPS" "$C_RESET" "$ELAPSED"
 echo ""

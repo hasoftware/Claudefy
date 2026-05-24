@@ -67,35 +67,64 @@ $OutputEncoding           = [System.Text.UTF8Encoding]::new($false)
 # ============================================================================
 $script:TOTAL_STEPS = 7
 $script:CURRENT_STEP = 0
-$script:STEP_RESULTS = @()
 $script:START_TIME = Get-Date
+$script:WARNINGS = @()
 
-function Write-ProgressBar([int]$step, [int]$total) {
-    $filled = [math]::Floor(($step / $total) * 10)
-    $empty  = 10 - $filled
-    $bar = ([char]0x2588).ToString() * $filled + ([char]0x2591).ToString() * $empty
-    return $bar
+$script:spinPs = $null
+$script:spinRs = $null
+
+function Start-Spin([string]$msg) {
+    $script:spinLabel = $msg
+    $script:spinRs = [runspacefactory]::CreateRunspace()
+    $script:spinRs.Open()
+    $script:spinPs = [powershell]::Create()
+    $script:spinPs.Runspace = $script:spinRs
+    [void]$script:spinPs.AddScript({
+        param([string]$label)
+        $f = [char[]]@(0x280B,0x2819,0x2839,0x2838,0x283C,0x2834,0x2826,0x2827,0x2807,0x280F)
+        $i = 0
+        try { [Console]::CursorVisible = $false } catch {}
+        try {
+            while ($true) {
+                [Console]::Write("`r  {0} {1}   " -f $f[$i % 10], $label)
+                [System.Threading.Thread]::Sleep(80)
+                $i++
+            }
+        } catch {}
+    }).AddArgument($msg)
+    $script:spinHandle = $script:spinPs.BeginInvoke()
 }
 
-function Write-StepStart([string]$name) {
-    $script:CURRENT_STEP++
-    $n = $script:CURRENT_STEP
-    $bar = Write-ProgressBar $n $script:TOTAL_STEPS
-    Write-Host ""
-    Write-Host "  [$n/$script:TOTAL_STEPS] " -NoNewline -ForegroundColor DarkCyan
-    Write-Host "$name" -NoNewline -ForegroundColor White
-    Write-Host "  [$bar]" -ForegroundColor DarkGray
+function Stop-Spin([string]$result, [bool]$ok = $true) {
+    if ($script:spinPs) {
+        try {
+            $script:spinPs.Stop()
+            $script:spinPs.Dispose()
+            $script:spinRs.Close()
+            $script:spinRs.Dispose()
+        } catch {}
+        $script:spinPs = $null
+        $script:spinRs = $null
+    }
+    try { [Console]::CursorVisible = $true } catch {}
+    [System.Threading.Thread]::Sleep(50)
+    $e = [char]27
+    [Console]::Write("$e[2K`r")
+    if ($ok) {
+        Write-Host "  $e[32m$([char]0x2713)$e[0m $result"
+    } else {
+        Write-Host "  $e[33m!$e[0m $result"
+    }
 }
 
-function Write-StepDone([string]$name, [string]$status = 'done') {
-    $script:STEP_RESULTS += @{ name = $name; status = $status }
-}
+function Stop-SpinWarn([string]$result) { Stop-Spin $result $false }
 
-function Write-Ok  ([string]$msg) { Write-Host "        $([char]0x2713) $msg" -ForegroundColor Green }
-function Write-Warn([string]$msg) { Write-Host "        ! $msg" -ForegroundColor Yellow }
-function Write-Err ([string]$msg) { Write-Host "        $([char]0x2717) $msg" -ForegroundColor Red }
-function Write-Info([string]$msg) { Write-Host "          $msg" -ForegroundColor DarkGray }
-function Write-Step([string]$msg) { Write-Host "        > $msg" -ForegroundColor Cyan }
+function Write-Detail([string]$msg) { Write-Host "      $msg" -ForegroundColor DarkGray }
+
+function Write-Err([string]$msg) {
+    if ($script:spinPs) { Stop-Spin $msg $false }
+    else { Write-Host "  $([char]0x2717) $msg" -ForegroundColor Red }
+}
 
 function Confirm-Action([string]$msg, [string]$default = 'Y') {
     if ($Force) { return $true }
@@ -110,7 +139,6 @@ function Backup-File([string]$path) {
         $ts = Get-Date -Format 'yyyyMMdd-HHmmss'
         $backup = "$path.backup-$ts"
         Copy-Item -Path $path -Destination $backup -Force
-        Write-Info "Backed up -> $backup"
     }
 }
 
@@ -135,42 +163,48 @@ if (-not (Confirm-Action "  Proceed?")) {
 # ============================================================================
 # 1. Pre-flight checks
 # ============================================================================
-Write-StepStart "Pre-flight checks"
+Start-Spin "Checking requirements..."
 
 if ($PSVersionTable.PSVersion.Major -lt 7) {
-    Write-Err "PowerShell 7+ required. Install: winget install Microsoft.PowerShell"
+    Stop-Spin "PowerShell 7+ required. Install: winget install Microsoft.PowerShell" $false
     exit 1
 }
-Write-Ok "PowerShell $($PSVersionTable.PSVersion)"
 
 $claudeCmd = Get-Command claude -ErrorAction SilentlyContinue
 if (-not $claudeCmd) {
-    Write-Err "Claude Code CLI not found. Install from https://claude.com/claude-code"
+    Stop-Spin "Claude Code CLI not found. Install from https://claude.com/claude-code" $false
     exit 1
 }
-Write-Ok "Claude Code: $($claudeCmd.Source)"
 
 $gitCmd  = Get-Command git  -ErrorAction SilentlyContinue
 $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
 $ghCmd   = Get-Command gh   -ErrorAction SilentlyContinue
 $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
 
-if ($gitCmd)  { Write-Ok "git: $($gitCmd.Source)" }      else { Write-Warn "git not found (git features disabled in statusLine)" }
-if ($nodeCmd) { Write-Ok "node: $(node --version)" }     else { Write-Warn "node not found (MCP servers will not run)" }
-if ($ghCmd)   { Write-Ok "gh: $($ghCmd.Source)" }        else { Write-Warn "gh CLI not found (PR/CI block disabled)" }
-if ($wingetCmd -or $SkipFont) { } else { Write-Warn "winget not found (cannot auto-install font)" }
+$warnings = @()
+if (-not $gitCmd)  { $warnings += "git not found" }
+if (-not $nodeCmd) { $warnings += "node not found" }
+if (-not $ghCmd)   { $warnings += "gh not found" }
 
 $claudeDir = Join-Path $env:USERPROFILE '.claude'
-if (-not (Test-Path $claudeDir)) {
-    New-Item -ItemType Directory -Path $claudeDir | Out-Null
-    Write-Ok "Created $claudeDir"
+if (-not (Test-Path $claudeDir)) { New-Item -ItemType Directory -Path $claudeDir | Out-Null }
+
+$tools = @("pwsh $($PSVersionTable.PSVersion)", "claude")
+if ($gitCmd)  { $tools += "git" }
+if ($nodeCmd) { $tools += "node" }
+if ($ghCmd)   { $tools += "gh" }
+Stop-Spin "Pre-flight — $($tools -join ', ')"
+if ($warnings.Count -gt 0) {
+    foreach ($w in $warnings) { Write-Detail "  ! $w" }
 }
 
 # ============================================================================
 # 2. Install JetBrainsMono Nerd Font
 # ============================================================================
-Write-StepStart "Nerd Font"
-if (-not $SkipFont) {
+Start-Spin "Installing Nerd Font..."
+if ($SkipFont) {
+    Stop-Spin "Nerd Font — skipped" $false
+} else {
     $hasNerdFont = $false
     try {
         $shellApp = New-Object -ComObject Shell.Application
@@ -180,22 +214,20 @@ if (-not $SkipFont) {
     } catch {}
 
     if ($hasNerdFont) {
-        Write-Ok "Already installed"
+        Stop-Spin "Nerd Font — already installed"
     } elseif ($wingetCmd) {
-        Write-Step "Installing via winget (~112 MB, may prompt for elevation)"
-        & winget install DEVCOM.JetBrainsMonoNerdFont --silent --accept-source-agreements --accept-package-agreements
-        if ($LASTEXITCODE -eq 0) { Write-Ok "Installed" } else { Write-Warn "winget returned $LASTEXITCODE - check output above" }
+        Stop-Spin "Nerd Font — installing via winget..." $true
+        & winget install DEVCOM.JetBrainsMonoNerdFont --silent --accept-source-agreements --accept-package-agreements | Out-Null
+        if ($LASTEXITCODE -ne 0) { Write-Detail "  ! winget returned $LASTEXITCODE" }
     } else {
-        Write-Warn "Skipped: winget not available. Install manually from https://www.nerdfonts.com/font-downloads"
+        Stop-Spin "Nerd Font — winget not available, install manually" $false
     }
-} else {
-    Write-Info "Skipped (-SkipFont)"
 }
 
 # ============================================================================
 # 3. Write helper scripts (statusline, notify-stop, set-title)
 # ============================================================================
-Write-StepStart "Helper scripts"
+Start-Spin "Writing helper scripts..."
 
 # --- statusline-command.ps1 -----------------------------------------------
 $STATUSLINE_PS1 = @'
@@ -637,7 +669,6 @@ if ($line3.Count -gt 0) {
 $statuslinePath = Join-Path $claudeDir 'statusline-command.ps1'
 Backup-File $statuslinePath
 Set-Content -Path $statuslinePath -Value $STATUSLINE_PS1 -Encoding UTF8
-Write-Ok "statusline-command.ps1"
 
 # --- notify-stop.ps1 ------------------------------------------------------
 $NOTIFY_PS1 = @'
@@ -717,7 +748,6 @@ $seq   = "${osc9}${bells}"
 $notifyPath = Join-Path $claudeDir 'notify-stop.ps1'
 Backup-File $notifyPath
 Set-Content -Path $notifyPath -Value $NOTIFY_PS1 -Encoding UTF8
-Write-Ok "notify-stop.ps1"
 
 # --- set-title.ps1 --------------------------------------------------------
 $SETTITLE_PS1 = @'
@@ -746,12 +776,12 @@ $seq = "${esc}]2;${title}${bel}"
 $titlePath = Join-Path $claudeDir 'set-title.ps1'
 Backup-File $titlePath
 Set-Content -Path $titlePath -Value $SETTITLE_PS1 -Encoding UTF8
-Write-Ok "set-title.ps1"
+Stop-Spin "Helper scripts — 3 files written"
 
 # ============================================================================
 # 4. Merge Claude Code settings.json
 # ============================================================================
-Write-StepStart "Settings merge"
+Start-Spin "Merging settings..."
 
 $settingsPath = Join-Path $claudeDir 'settings.json'
 Backup-File $settingsPath
@@ -767,10 +797,7 @@ if (Test-Path $settingsPath) {
     try {
         $existing = Get-Content $settingsPath -Raw | ConvertFrom-Json -AsHashtable
         if ($existing) { $settings = [ordered]@{}; foreach ($k in $existing.Keys) { $settings[$k] = $existing[$k] } }
-        Write-Info "Loaded existing settings.json"
-    } catch {
-        Write-Warn "Could not parse existing settings.json — starting fresh"
-    }
+    } catch { }
 }
 
 # statusLine — replace
@@ -835,13 +862,16 @@ $settings['permissions']['allow'] = @($allowSet) | Sort-Object
 
 # Write back
 $settings | ConvertTo-Json -Depth 20 | Set-Content -Path $settingsPath -Encoding UTF8
-Write-Ok "settings.json merged ($($settings['permissions']['allow'].Count) allow entries)"
+$allowCount = $settings['permissions']['allow'].Count
+Stop-Spin "Settings merged — $allowCount allow entries"
 
 # ============================================================================
 # 5. Windows Terminal — set font to JetBrainsMono Nerd Font
 # ============================================================================
-Write-StepStart "Windows Terminal"
-if (-not $SkipWindowsTerminal) {
+Start-Spin "Configuring Windows Terminal..."
+if ($SkipWindowsTerminal) {
+    Stop-Spin "Windows Terminal — skipped" $false
+} else {
     $wtPaths = @(
         "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json",
         "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json",
@@ -850,7 +880,7 @@ if (-not $SkipWindowsTerminal) {
     $wtPath = $wtPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
 
     if (-not $wtPath) {
-        Write-Warn "Windows Terminal not detected — skipping. Set font manually to 'JetBrainsMono Nerd Font' in your terminal."
+        Stop-Spin "Windows Terminal — not detected, set font manually" $false
     } else {
         Backup-File $wtPath
         try {
@@ -863,69 +893,66 @@ if (-not $SkipWindowsTerminal) {
                 $wt['profiles']['defaults']['font']['face'] = 'JetBrainsMono Nerd Font'
             }
             $wt | ConvertTo-Json -Depth 30 | Set-Content -Path $wtPath -Encoding UTF8
-            Write-Ok "Font set to 'JetBrainsMono Nerd Font' in $wtPath"
+            Stop-Spin "Windows Terminal — font configured"
         } catch {
-            Write-Warn "Could not modify Windows Terminal settings: $_"
+            Stop-Spin "Windows Terminal — failed: $_" $false
         }
     }
-} else {
-    Write-Info "Skipped (-SkipWindowsTerminal)"
 }
 
 # ============================================================================
 # 6. MCP server (sequential-thinking)
 # ============================================================================
-Write-StepStart "MCP server"
-if (-not $SkipMCP) {
-    if (-not $nodeCmd) {
-        Write-Warn "Node.js not found — skipping MCP setup"
+Start-Spin "Setting up MCP server..."
+if ($SkipMCP) {
+    Stop-Spin "MCP server — skipped" $false
+} elseif (-not $nodeCmd) {
+    Stop-Spin "MCP server — node not found, skipping" $false
+} else {
+    $current = & claude mcp list 2>&1
+    if ($current -match 'sequential-thinking') {
+        Stop-Spin "MCP server — already configured"
     } else {
-        $current = & claude mcp list 2>&1
-        if ($current -match 'sequential-thinking') {
-            Write-Ok "Already configured"
-        } else {
-            try {
-                & claude mcp add sequential-thinking --scope user -- npx -y '@modelcontextprotocol/server-sequential-thinking' 2>&1 | Out-Null
-                Write-Ok "Added (will install on first use)"
-            } catch {
-                Write-Warn "Failed: $_"
-            }
+        try {
+            & claude mcp add sequential-thinking --scope user -- npx -y '@modelcontextprotocol/server-sequential-thinking' 2>&1 | Out-Null
+            Stop-Spin "MCP server — sequential-thinking added"
+        } catch {
+            Stop-Spin "MCP server — failed: $_" $false
         }
     }
-} else {
-    Write-Info "Skipped (-SkipMCP)"
 }
 
 # ============================================================================
 # 7. DevRadar (optional — powers Line 3 LOC widget)
 # ============================================================================
-Write-StepStart "DevRadar"
-if (-not $SkipDevRadar) {
+if ($SkipDevRadar) {
+    Start-Spin "DevRadar..."
+    Stop-Spin "DevRadar — skipped" $false
+} else {
     $devradarCmd = Get-Command devradar -ErrorAction SilentlyContinue
     if ($devradarCmd) {
-        Write-Ok "Already installed: $($devradarCmd.Source)"
+        Start-Spin "DevRadar..."
+        Stop-Spin "DevRadar — already installed"
     } elseif (-not $nodeCmd) {
-        Write-Warn "npm not available — skipping. Install Node.js then run: npm install -g devradar"
+        Start-Spin "DevRadar..."
+        Stop-Spin "DevRadar — npm not available" $false
     } else {
-        Write-Info "DevRadar is a code analyzer (LOC, languages, frameworks)."
-        Write-Info "Powers Line 3 of the statusLine. Repo: https://github.com/hasoftware/DevRadar"
-        if (Confirm-Action "Install DevRadar globally via npm now?") {
-            try {
-                & npm install -g devradar 2>&1 | ForEach-Object { Write-Info $_ }
-                if ($LASTEXITCODE -eq 0) {
-                    Write-Ok "DevRadar installed — Line 3 will show after next message"
-                } else {
-                    Write-Warn "npm returned $LASTEXITCODE — install manually: npm install -g devradar"
-                }
-            } catch {
-                Write-Warn "Failed: $_"
+        Write-Host ""
+        Write-Host "  ? " -NoNewline -ForegroundColor Cyan
+        Write-Host "DevRadar powers Line 3 (LOC, frameworks). Install globally?" -ForegroundColor White
+        if (Confirm-Action "   ") {
+            Start-Spin "Installing DevRadar..."
+            & npm install -g devradar 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Stop-Spin "DevRadar — installed"
+            } else {
+                Stop-Spin "DevRadar — npm failed, install manually" $false
             }
         } else {
-            Write-Info "Skipped. To enable Line 3 later, run: npm install -g devradar"
+            Start-Spin "DevRadar..."
+            Stop-Spin "DevRadar — skipped (install later: npm i -g devradar)" $false
         }
     }
-} else {
-    Write-Info "Skipped (-SkipDevRadar)"
 }
 
 # ============================================================================
