@@ -1,0 +1,36 @@
+{
+  "name": "@hasoftware/claudefy",
+  "version": "1.2.0",
+  "description": "Make Claude Code yours — cross-platform statusline, smart notifications, themes & more.",
+  "bin": {
+    "claudefy": "bin/cli.js"
+  },
+  "files": [
+    "bin/",
+    "windows/",
+    "Linux/",
+    "MACOS/",
+    "LICENSE"
+  ],
+  "keywords": [
+    "claude",
+    "claude-code",
+    "statusline",
+    "developer-tools",
+    "terminal",
+    "cli"
+  ],
+  "author": "Hoang Anh Dev <hacklike17.ai@gmail.com> (https://github.com/hasoftware)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hasoftware/Claudefy.git"
+  },
+  "homepage": "https://github.com/hasoftware/Claudefy#readme",
+  "bugs": {
+    "url": "https://github.com/hasoftware/Claudefy/issues"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}

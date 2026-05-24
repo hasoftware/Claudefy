@@ -5,6 +5,9 @@
 .claude/
 $env:TEMP/
 
+# npm
+node_modules/
+
 # IDE
 .vscode/
 .idea/

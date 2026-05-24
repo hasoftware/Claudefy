@@ -8,11 +8,16 @@ A cross-platform toolkit that transforms Claude Code's default status bar into a
 
 **One install. Every machine. Every project.**
 
+[![npm](https://img.shields.io/npm/v/@hasoftware/claudefy?style=flat-square&color=CB3837&logo=npm)](https://www.npmjs.com/package/@hasoftware/claudefy)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-blue?style=flat-square)](#installation)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Ready-FF6B35?style=flat-square&logo=anthropic)](https://claude.com/claude-code)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](https://github.com/hasoftware/Claudefy/pulls)
 [![Telegram](https://img.shields.io/badge/Telegram-Join-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/hasoftware)
+
+```bash
+npx @hasoftware/claudefy
+```
 
 [Quick Start](#quick-start) · [Features](#features) · [Preview](#what-it-looks-like) · [Configuration](#configuration) · [FAQ](#faq)
 
@@ -109,7 +114,20 @@ JetBrainsMono Nerd Font installed via winget, brew, or direct download depending
 
 ### Quick start
 
-**Windows**
+**One command (recommended)**
+
+```bash
+npx @hasoftware/claudefy
+```
+
+Works on Windows, Linux, and macOS. Detects your platform and runs the right installer automatically.
+
+Options: `--force`, `--skip-font`, `--skip-mcp`, `--skip-devradar`
+
+**Manual install**
+
+<details>
+<summary>Windows</summary>
 
 ```powershell
 cd windows
@@ -118,7 +136,10 @@ cd windows
 
 Or double-click `Claudefy.cmd`. See `windows/README.md` for details.
 
-**Linux**
+</details>
+
+<details>
+<summary>Linux</summary>
 
 ```bash
 cd Linux
@@ -128,7 +149,10 @@ chmod +x claudefy.sh install-claudefy.sh lib/*.sh
 
 See `Linux/README.md` for details.
 
-**macOS**
+</details>
+
+<details>
+<summary>macOS</summary>
 
 ```bash
 cd MACOS
@@ -137,6 +161,8 @@ chmod +x claudefy.sh install-claudefy.sh lib/*.sh
 ```
 
 See `MACOS/README.md` for details.
+
+</details>
 
 ## The Claudefy menu
 
