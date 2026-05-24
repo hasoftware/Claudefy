@@ -65,17 +65,37 @@ $OutputEncoding           = [System.Text.UTF8Encoding]::new($false)
 # ============================================================================
 # UI helpers
 # ============================================================================
-function Write-Section([string]$title) {
-    Write-Host ""
-    Write-Host ("=" * 60)         -ForegroundColor DarkCyan
-    Write-Host "  $title"         -ForegroundColor Cyan
-    Write-Host ("=" * 60)         -ForegroundColor DarkCyan
+$script:TOTAL_STEPS = 7
+$script:CURRENT_STEP = 0
+$script:STEP_RESULTS = @()
+$script:START_TIME = Get-Date
+
+function Write-ProgressBar([int]$step, [int]$total) {
+    $filled = [math]::Floor(($step / $total) * 10)
+    $empty  = 10 - $filled
+    $bar = ([char]0x2588).ToString() * $filled + ([char]0x2591).ToString() * $empty
+    return $bar
 }
-function Write-Step([string]$msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
-function Write-Ok  ([string]$msg) { Write-Host "  [OK] $msg" -ForegroundColor Green }
-function Write-Warn([string]$msg) { Write-Host "  [!]  $msg" -ForegroundColor Yellow }
-function Write-Err ([string]$msg) { Write-Host "  [X]  $msg" -ForegroundColor Red }
-function Write-Info([string]$msg) { Write-Host "       $msg" -ForegroundColor DarkGray }
+
+function Write-StepStart([string]$name) {
+    $script:CURRENT_STEP++
+    $n = $script:CURRENT_STEP
+    $bar = Write-ProgressBar $n $script:TOTAL_STEPS
+    Write-Host ""
+    Write-Host "  [$n/$script:TOTAL_STEPS] " -NoNewline -ForegroundColor DarkCyan
+    Write-Host "$name" -NoNewline -ForegroundColor White
+    Write-Host "  [$bar]" -ForegroundColor DarkGray
+}
+
+function Write-StepDone([string]$name, [string]$status = 'done') {
+    $script:STEP_RESULTS += @{ name = $name; status = $status }
+}
+
+function Write-Ok  ([string]$msg) { Write-Host "        $([char]0x2713) $msg" -ForegroundColor Green }
+function Write-Warn([string]$msg) { Write-Host "        ! $msg" -ForegroundColor Yellow }
+function Write-Err ([string]$msg) { Write-Host "        $([char]0x2717) $msg" -ForegroundColor Red }
+function Write-Info([string]$msg) { Write-Host "          $msg" -ForegroundColor DarkGray }
+function Write-Step([string]$msg) { Write-Host "        > $msg" -ForegroundColor Cyan }
 
 function Confirm-Action([string]$msg, [string]$default = 'Y') {
     if ($Force) { return $true }
@@ -97,26 +117,25 @@ function Backup-File([string]$path) {
 # ============================================================================
 # Welcome
 # ============================================================================
-Write-Section "Claudefy Installer - make Claude Code yours"
-Write-Host "  by Hoang Anh Dev - HASOFTWARE" -ForegroundColor DarkGray
-Write-Host "  https://t.me/hasoftware  |  https://github.com/hasoftware/Claudefy" -ForegroundColor DarkGray
 Write-Host ""
-Write-Host "  - Powerline statusLine (up to 3 lines, full info)"
-Write-Host "  - JetBrainsMono Nerd Font"
-Write-Host "  - Hooks: notification + dynamic tab title + quota alerts"
-Write-Host "  - MCP: sequential-thinking"
-Write-Host "  - DevRadar: optional Line 3 LOC widget (asks before install)"
-Write-Host "  - Permission allowlist"
+Write-Host "  $([char]0x2588)$([char]0x2588) " -NoNewline -ForegroundColor Cyan
+Write-Host "Claudefy" -NoNewline -ForegroundColor White
+Write-Host " - make Claude Code yours." -ForegroundColor DarkGray
+Write-Host "     https://github.com/hasoftware/Claudefy" -ForegroundColor DarkGray
+Write-Host ""
+Write-Host "     Components to install:" -ForegroundColor DarkGray
+Write-Host "     $([char]0x25C6) Statusline  $([char]0x25C6) Hooks  $([char]0x25C6) Font  $([char]0x25C6) MCP  $([char]0x25C6) DevRadar" -ForegroundColor DarkCyan
+Write-Host ""
 
-if (-not (Confirm-Action "`nProceed with install?")) {
-    Write-Host "Cancelled." -ForegroundColor Yellow
+if (-not (Confirm-Action "  Proceed?")) {
+    Write-Host "  Cancelled." -ForegroundColor Yellow
     exit 0
 }
 
 # ============================================================================
 # 1. Pre-flight checks
 # ============================================================================
-Write-Section "1. Pre-flight checks"
+Write-StepStart "Pre-flight checks"
 
 if ($PSVersionTable.PSVersion.Major -lt 7) {
     Write-Err "PowerShell 7+ required. Install: winget install Microsoft.PowerShell"
@@ -150,9 +169,8 @@ if (-not (Test-Path $claudeDir)) {
 # ============================================================================
 # 2. Install JetBrainsMono Nerd Font
 # ============================================================================
+Write-StepStart "Nerd Font"
 if (-not $SkipFont) {
-    Write-Section "2. Install JetBrainsMono Nerd Font"
-
     $hasNerdFont = $false
     try {
         $shellApp = New-Object -ComObject Shell.Application
@@ -171,14 +189,13 @@ if (-not $SkipFont) {
         Write-Warn "Skipped: winget not available. Install manually from https://www.nerdfonts.com/font-downloads"
     }
 } else {
-    Write-Section "2. Install JetBrainsMono Nerd Font"
     Write-Info "Skipped (-SkipFont)"
 }
 
 # ============================================================================
 # 3. Write helper scripts (statusline, notify-stop, set-title)
 # ============================================================================
-Write-Section "3. Write helper scripts to $claudeDir"
+Write-StepStart "Helper scripts"
 
 # --- statusline-command.ps1 -----------------------------------------------
 $STATUSLINE_PS1 = @'
@@ -734,7 +751,7 @@ Write-Ok "set-title.ps1"
 # ============================================================================
 # 4. Merge Claude Code settings.json
 # ============================================================================
-Write-Section "4. Merge Claude Code settings.json"
+Write-StepStart "Settings merge"
 
 $settingsPath = Join-Path $claudeDir 'settings.json'
 Backup-File $settingsPath
@@ -823,9 +840,8 @@ Write-Ok "settings.json merged ($($settings['permissions']['allow'].Count) allow
 # ============================================================================
 # 5. Windows Terminal — set font to JetBrainsMono Nerd Font
 # ============================================================================
+Write-StepStart "Windows Terminal"
 if (-not $SkipWindowsTerminal) {
-    Write-Section "5. Windows Terminal font"
-
     $wtPaths = @(
         "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json",
         "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json",
@@ -853,15 +869,14 @@ if (-not $SkipWindowsTerminal) {
         }
     }
 } else {
-    Write-Section "5. Windows Terminal font"
     Write-Info "Skipped (-SkipWindowsTerminal)"
 }
 
 # ============================================================================
 # 6. MCP server (sequential-thinking)
 # ============================================================================
+Write-StepStart "MCP server"
 if (-not $SkipMCP) {
-    Write-Section "6. MCP server: sequential-thinking"
     if (-not $nodeCmd) {
         Write-Warn "Node.js not found — skipping MCP setup"
     } else {
@@ -878,15 +893,14 @@ if (-not $SkipMCP) {
         }
     }
 } else {
-    Write-Section "6. MCP server"
     Write-Info "Skipped (-SkipMCP)"
 }
 
 # ============================================================================
 # 7. DevRadar (optional — powers Line 3 LOC widget)
 # ============================================================================
+Write-StepStart "DevRadar"
 if (-not $SkipDevRadar) {
-    Write-Section "7. DevRadar (optional — Line 3 LOC widget)"
     $devradarCmd = Get-Command devradar -ErrorAction SilentlyContinue
     if ($devradarCmd) {
         Write-Ok "Already installed: $($devradarCmd.Source)"
@@ -911,30 +925,28 @@ if (-not $SkipDevRadar) {
         }
     }
 } else {
-    Write-Section "7. DevRadar"
     Write-Info "Skipped (-SkipDevRadar)"
 }
 
 # ============================================================================
 # 8. Done
 # ============================================================================
-Write-Section "Install complete!"
+$elapsed = ((Get-Date) - $script:START_TIME).TotalSeconds
+$elapsed = [math]::Round($elapsed, 1)
+
 Write-Host ""
-Write-Host "  Next steps:" -ForegroundColor Cyan
-Write-Host "    1. Close ALL Windows Terminal windows (to reload font)"
-Write-Host "    2. Reopen Windows Terminal"
-Write-Host "    3. cd into any project directory and run 'claude'"
+Write-Host "  $([char]0x2501)" -NoNewline -ForegroundColor DarkCyan
+Write-Host "$([char]0x2501)" * 44 -NoNewline -ForegroundColor DarkCyan
+Write-Host "" -ForegroundColor DarkCyan
 Write-Host ""
-Write-Host "  Backups (if any) saved next to originals with .backup-<timestamp>" -ForegroundColor DarkGray
+Write-Host "  $([char]0x2705) " -NoNewline
+Write-Host "All $script:TOTAL_STEPS steps completed" -NoNewline -ForegroundColor Green
+Write-Host " in ${elapsed}s" -ForegroundColor DarkGray
 Write-Host ""
-Write-Host "  Files installed in $claudeDir :" -ForegroundColor Cyan
-Get-ChildItem $claudeDir -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -in @('statusline-command.ps1','notify-stop.ps1','set-title.ps1','settings.json') } |
-    ForEach-Object { Write-Host "    - $($_.Name)" -ForegroundColor DarkGray }
+Write-Host "  $([char]0x2192) " -NoNewline -ForegroundColor Cyan
+Write-Host "Close & reopen terminal, then run " -NoNewline
+Write-Host "claude" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  To revert any file, copy its .backup-<ts> back over the original." -ForegroundColor DarkGray
-Write-Host ""
-Write-Host "  Stay in touch:" -ForegroundColor Cyan
-Write-Host "    Telegram   : https://t.me/hasoftware" -ForegroundColor DarkGray
-Write-Host "    Repository : https://github.com/hasoftware/Claudefy" -ForegroundColor DarkGray
+Write-Host "     Backups saved with .backup-<timestamp> suffix" -ForegroundColor DarkGray
+Write-Host "     Telegram: t.me/hasoftware  |  github.com/hasoftware/Claudefy" -ForegroundColor DarkGray
 Write-Host ""

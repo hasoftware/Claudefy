@@ -36,20 +36,35 @@ done
 # UI helpers
 # ---------------------------------------------------------------------------
 C_CYAN=$'\033[36m'
+C_DCYAN=$'\033[96m'
 C_GREEN=$'\033[32m'
 C_YELLOW=$'\033[33m'
 C_RED=$'\033[31m'
 C_GRAY=$'\033[90m'
+C_WHITE=$'\033[97m'
 C_RESET=$'\033[0m'
 
-section() { printf '\n%s%s%s\n  %s\n%s%s%s\n' \
-  "$C_CYAN" "$(printf '=%.0s' {1..60})" "$C_RESET" "$1" \
-  "$C_CYAN" "$(printf '=%.0s' {1..60})" "$C_RESET"; }
-step() { printf '%s==> %s%s\n' "$C_CYAN" "$1" "$C_RESET"; }
-ok()   { printf '  %s[OK]%s %s\n' "$C_GREEN" "$C_RESET" "$1"; }
-warn() { printf '  %s[!]%s  %s\n' "$C_YELLOW" "$C_RESET" "$1"; }
-err()  { printf '  %s[X]%s  %s\n' "$C_RED" "$C_RESET" "$1"; }
-info() { printf '       %s%s%s\n' "$C_GRAY" "$1" "$C_RESET"; }
+TOTAL_STEPS=6
+CURRENT_STEP=0
+START_TIME=$(date +%s)
+
+step_start() {
+  CURRENT_STEP=$((CURRENT_STEP + 1))
+  local filled=$((CURRENT_STEP * 10 / TOTAL_STEPS))
+  local empty=$((10 - filled))
+  local bar=""
+  for i in $(seq 1 $filled); do bar="${bar}█"; done
+  for i in $(seq 1 $empty); do bar="${bar}░"; done
+  printf '\n  %s[%d/%d]%s %s%s%s  %s[%s]%s\n' \
+    "$C_DCYAN" "$CURRENT_STEP" "$TOTAL_STEPS" "$C_RESET" \
+    "$C_WHITE" "$1" "$C_RESET" \
+    "$C_GRAY" "$bar" "$C_RESET"
+}
+ok()   { printf '        %s✓%s %s\n' "$C_GREEN" "$C_RESET" "$1"; }
+warn() { printf '        %s!%s %s\n' "$C_YELLOW" "$C_RESET" "$1"; }
+err()  { printf '        %s✗%s %s\n' "$C_RED" "$C_RESET" "$1"; }
+info() { printf '          %s%s%s\n' "$C_GRAY" "$1" "$C_RESET"; }
+step() { printf '        %s> %s%s\n' "$C_CYAN" "$1" "$C_RESET"; }
 
 confirm() {
   [ "$FORCE" = "1" ] && return 0
@@ -69,22 +84,18 @@ backup_file() {
 # ---------------------------------------------------------------------------
 # Welcome
 # ---------------------------------------------------------------------------
-section "Claudefy Installer (Linux) - make Claude Code yours"
-echo "  by Hoang Anh Dev - HASOFTWARE"
-echo "  https://t.me/hasoftware  |  https://github.com/hasoftware/Claudefy"
-echo
-echo "  - Powerline statusLine (up to 3 lines)"
-echo "  - JetBrainsMono Nerd Font"
-echo "  - Hooks: notification + dynamic tab title + quota alerts"
-echo "  - MCP: sequential-thinking"
-echo "  - DevRadar: optional Line 3 LOC widget (asks before install)"
-echo "  - Permission allowlist"
-confirm "Proceed with install?" || { echo "Cancelled."; exit 0; }
+echo ""
+printf '  %s██%s %sClaudefy%s — make Claude Code yours.\n' "$C_CYAN" "$C_RESET" "$C_WHITE" "$C_RESET"
+printf '     %shttps://github.com/hasoftware/Claudefy%s\n' "$C_GRAY" "$C_RESET"
+echo ""
+printf '     %s◆ Statusline  ◆ Hooks  ◆ Font  ◆ MCP  ◆ DevRadar%s\n' "$C_DCYAN" "$C_RESET"
+echo ""
+confirm "  Proceed?" || { echo "  Cancelled."; exit 0; }
 
 # ---------------------------------------------------------------------------
 # 1. Pre-flight checks
 # ---------------------------------------------------------------------------
-section "1. Pre-flight checks"
+step_start "Pre-flight checks"
 have() { command -v "$1" >/dev/null 2>&1; }
 
 have bash    && ok "bash $(bash --version | head -1 | awk '{print $4}')" || { err "bash not found"; exit 1; }
@@ -109,7 +120,7 @@ fi
 # ---------------------------------------------------------------------------
 # 2. Install JetBrainsMono Nerd Font
 # ---------------------------------------------------------------------------
-section "2. Install JetBrainsMono Nerd Font"
+step_start "Nerd Font"
 if [ "$SKIP_FONT" = "1" ]; then
   info "Skipped (--skip-font)"
 else
@@ -144,7 +155,7 @@ fi
 # ---------------------------------------------------------------------------
 # 3. Copy helper scripts
 # ---------------------------------------------------------------------------
-section "3. Copy helper scripts to $CLAUDE_DIR"
+step_start "Helper scripts"
 for name in statusline-command.sh notify-stop.sh set-title.sh; do
   src="$LIB_DIR/$name"
   dst="$CLAUDE_DIR/$name"
@@ -158,7 +169,7 @@ done
 # ---------------------------------------------------------------------------
 # 4. Merge Claude Code settings.json
 # ---------------------------------------------------------------------------
-section "4. Merge Claude Code settings.json"
+step_start "Settings merge"
 SETTINGS="$CLAUDE_DIR/settings.json"
 backup_file "$SETTINGS"
 
@@ -222,7 +233,7 @@ ok "settings.json merged ($allow_count allow entries)"
 # ---------------------------------------------------------------------------
 # 5. MCP server
 # ---------------------------------------------------------------------------
-section "5. MCP: sequential-thinking"
+step_start "MCP server"
 if [ "$SKIP_MCP" = "1" ]; then
   info "Skipped (--skip-mcp)"
 elif ! have node; then
@@ -239,7 +250,7 @@ fi
 # ---------------------------------------------------------------------------
 # 6. DevRadar (optional - powers Line 3 LOC widget)
 # ---------------------------------------------------------------------------
-section "6. DevRadar (optional - Line 3 LOC widget)"
+step_start "DevRadar"
 if [ "$SKIP_DEVRADAR" = "1" ]; then
   info "Skipped (--skip-devradar)"
 elif have devradar; then
@@ -263,17 +274,14 @@ fi
 # ---------------------------------------------------------------------------
 # Done
 # ---------------------------------------------------------------------------
-section "Install complete"
-echo
-echo "  Next steps:"
-echo "    1. Set your terminal font to 'JetBrainsMono Nerd Font'"
-echo "    2. Restart your terminal to reload the font"
-echo "    3. cd into any project and run 'claude'"
-echo
-echo "  Files in $CLAUDE_DIR :"
-ls -1 "$CLAUDE_DIR" | grep -E '^(statusline-command|notify-stop|set-title)\.sh$|^settings\.json$' | sed 's/^/    - /'
-echo
-echo "  Stay in touch:"
-echo "    Telegram   : https://t.me/hasoftware"
-echo "    Repository : https://github.com/hasoftware/Claudefy"
-echo
+ELAPSED=$(( $(date +%s) - START_TIME ))
+echo ""
+printf '  %s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n' "$C_DCYAN" "$C_RESET"
+echo ""
+printf '  %s✅ All %d steps completed%s in %ds\n' "$C_GREEN" "$TOTAL_STEPS" "$C_RESET" "$ELAPSED"
+echo ""
+printf '  %s→%s Close & reopen terminal, then run %sclaude%s\n' "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+echo ""
+printf '     %sBackups saved with .backup-<timestamp> suffix%s\n' "$C_GRAY" "$C_RESET"
+printf '     %sTelegram: t.me/hasoftware  |  github.com/hasoftware/Claudefy%s\n' "$C_GRAY" "$C_RESET"
+echo ""
