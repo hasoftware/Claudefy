@@ -928,7 +928,7 @@ Write-Host ""
 Write-Host "  Backups (if any) saved next to originals with .backup-<timestamp>" -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "  Files installed in $claudeDir :" -ForegroundColor Cyan
-Get-ChildItem $claudeDir -Filter '*.ps1','settings.json' -ErrorAction SilentlyContinue |
+Get-ChildItem $claudeDir -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -in @('statusline-command.ps1','notify-stop.ps1','set-title.ps1','settings.json') } |
     ForEach-Object { Write-Host "    - $($_.Name)" -ForegroundColor DarkGray }
 Write-Host ""
