@@ -60,7 +60,8 @@ start_spin() {
 
 stop_spin() {
   local msg="$1" ok="${2:-1}"
-  kill "$SPIN_PID" 2>/dev/null; wait "$SPIN_PID" 2>/dev/null
+  kill "$SPIN_PID" 2>/dev/null || true
+  wait "$SPIN_PID" 2>/dev/null || true
   SPIN_PID=""
   printf '\033[2K\r'
   if [ "$ok" = "1" ]; then

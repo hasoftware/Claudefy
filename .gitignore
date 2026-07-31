@@ -7,6 +7,7 @@ $env:TEMP/
 
 # npm
 node_modules/
+.npmrc
 
 # IDE
 .vscode/
