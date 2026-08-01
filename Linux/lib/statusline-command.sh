@@ -381,7 +381,7 @@ fi
 add_l1 236 15 " $NF_CLOCK $time_str "
 
 # Claudefy update check (cached 24h)
-CLAUDEFY_VER='1.4.0'
+CLAUDEFY_VER='1.4.1'
 update_avail=""
 uc_file="/tmp/claudefy-update-check.json"
 latest_ver=""
