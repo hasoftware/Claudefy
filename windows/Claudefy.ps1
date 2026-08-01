@@ -25,7 +25,7 @@ $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $OutputEncoding           = [System.Text.UTF8Encoding]::new($false)
 
-$VERSION    = '1.4.1'
+$VERSION    = '1.4.2'
 $AUTHOR     = 'Hoang Anh Dev'
 $ADMIN      = 'HASOFTWARE'
 $TELEGRAM   = 'https://t.me/hasoftware'

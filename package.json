@@ -1,6 +1,6 @@
 {
   "name": "@hasoftware/claudefy",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "Make Claude Code yours — cross-platform statusline, smart notifications, themes & more.",
   "bin": {
     "claudefy": "bin/cli.js"

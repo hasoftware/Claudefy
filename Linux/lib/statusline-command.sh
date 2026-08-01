@@ -20,34 +20,36 @@ command -v jq >/dev/null 2>&1 || exit 0
 # ---------------------------------------------------------------------------
 # Extract fields
 # ---------------------------------------------------------------------------
-get() { echo "$input" | jq -r "$1 // empty" 2>/dev/null; }
-geti() { local v; v=$(echo "$input" | jq -r "$1 // 0" 2>/dev/null); echo "${v%.*}"; }
+# Single jq pass — one subprocess instead of ~16. Each render used to spawn
+# jq per field; over SSH that latency was the main source of flicker.
+eval "$(echo "$input" | jq -r '
+  def s(f): (f // "") | tostring;
+  @sh "cwd=\(s(.workspace.current_dir // .cwd))",
+  @sh "model=\(s(.model.display_name))",
+  @sh "model_id=\(s(.model.id))",
+  @sh "ctx=\(s(.context_window.remaining_percentage))",
+  @sh "fh=\(s(.rate_limits.five_hour.used_percentage))",
+  @sh "fh_reset=\(s(.rate_limits.five_hour.resets_at))",
+  @sh "sd=\(s(.rate_limits.seven_day.used_percentage))",
+  @sh "sd_reset=\(s(.rate_limits.seven_day.resets_at))",
+  @sh "op=\(s(.rate_limits.seven_day_opus.used_percentage))",
+  @sh "cost=\(s(.cost.total_cost_usd))",
+  @sh "added=\(s(.cost.total_lines_added // 0))",
+  @sh "removed=\(s(.cost.total_lines_removed // 0))",
+  @sh "dur_ms=\(s(.cost.total_duration_ms // 0))",
+  @sh "in_tok=\(s(.context_window.total_input_tokens // 0))",
+  @sh "out_tok=\(s(.context_window.total_output_tokens // 0))",
+  @sh "session_id=\(s(.session_id))",
+  @sh "perm=\(s(.permission_mode // .permissionMode))",
+  @sh "tp=\(s(.transcript_path))"
+' 2>/dev/null)"
 
-cwd=$(get '.workspace.current_dir')
-[ -z "$cwd" ] && cwd=$(get '.cwd')
+[ -z "$model" ] && model='Claude'
 dir=$(basename "$cwd" 2>/dev/null)
 [ -z "$dir" ] && dir='?'
-
-model=$(get '.model.display_name')
-[ -z "$model" ] && model='Claude'
-
-ctx=$(get '.context_window.remaining_percentage')
-fh=$(get '.rate_limits.five_hour.used_percentage')
-fh_reset=$(get '.rate_limits.five_hour.resets_at')
-sd=$(get '.rate_limits.seven_day.used_percentage')
-sd_reset=$(get '.rate_limits.seven_day.resets_at')
-op=$(get '.rate_limits.seven_day_opus.used_percentage')
-
-cost=$(get '.cost.total_cost_usd')
-added=$(geti '.cost.total_lines_added')
-removed=$(geti '.cost.total_lines_removed')
-dur_ms=$(geti '.cost.total_duration_ms')
-in_tok=$(geti '.context_window.total_input_tokens')
-out_tok=$(geti '.context_window.total_output_tokens')
-
-session_id=$(get '.session_id')
-perm=$(get '.permission_mode')
-[ -z "$perm" ] && perm=$(get '.permissionMode')
+# integer floors (former geti behavior)
+added=${added%.*}; removed=${removed%.*}; dur_ms=${dur_ms%.*}
+in_tok=${in_tok%.*}; out_tok=${out_tok%.*}
 
 # ---------------------------------------------------------------------------
 # ANSI + Nerd Font icons (UTF-8 byte sequences)
@@ -182,6 +184,24 @@ if [ "$COMPACT" = "auto" ]; then
   if [ -n "$SSH_CONNECTION" ] || [ -n "$SSH_TTY" ]; then COMPACT=1; else COMPACT=0; fi
 fi
 
+# ---------------------------------------------------------------------------
+# Render cache — when the values we display are unchanged, reuse the last
+# render verbatim (TTL 10s). Identical output lets the host UI diff to a
+# no-op instead of repainting, which keeps full mode smooth even over SSH.
+# ---------------------------------------------------------------------------
+tok_h=$(human_tokens $((in_tok + out_tok)))
+rc_key="$COMPACT|$cwd|$model|$perm|${ctx%.*}|${fh%.*}|${sd%.*}|${op%.*}|$cost|$added|$removed|$((dur_ms / 60000))|$tok_h|$(date -u +%H:%M)"
+rc_file="/tmp/claudefy-render-${session_id:-nosession}.txt"
+if [ -f "$rc_file" ]; then
+  rc_age=$(file_age "$rc_file")
+  if [ -n "$rc_age" ] && [ "$rc_age" -le 10 ] 2>/dev/null; then
+    if [ "$(head -n 1 "$rc_file" 2>/dev/null)" = "$rc_key" ]; then
+      tail -n +2 "$rc_file"
+      exit 0
+    fi
+  fi
+fi
+
 # ===========================================================================
 # LINE 1: Workspace context
 # ===========================================================================
@@ -243,7 +263,17 @@ fi
 
 # Runtime detection
 runtime_icon=""; runtime_name=""
-if [ "$COMPACT" != "1" ] && [ -n "$cwd" ] && [ -d "$cwd" ]; then
+runtime_txt=""; rt_done=0
+if [ "$COMPACT" != "1" ] && [ -n "$cwd" ]; then
+  rt_ck=$(echo "$cwd" | tr '/\\:*?"<>|' '_')
+  rt_cf="/tmp/claudefy-runtime-$rt_ck.txt"
+  rt_age=$(file_age "$rt_cf")
+  if [ -n "$rt_age" ] && [ "$rt_age" -le 60 ] 2>/dev/null; then
+    runtime_txt=$(cat "$rt_cf" 2>/dev/null)
+    rt_done=1
+  fi
+fi
+if [ "$rt_done" != "1" ] && [ "$COMPACT" != "1" ] && [ -n "$cwd" ] && [ -d "$cwd" ]; then
   if [ -f "$cwd/package.json" ] && command -v node >/dev/null 2>&1; then
     v=$(node --version 2>/dev/null | sed 's/^v//')
     [ -n "$v" ] && runtime_icon=$NF_NODE && runtime_name="Node $v"
@@ -274,7 +304,11 @@ if [ "$COMPACT" != "1" ] && [ -n "$cwd" ] && [ -d "$cwd" ]; then
     [ -n "$v" ] && runtime_icon=$NF_RUBY && runtime_name="Ruby $v"
   fi
 fi
-[ -n "$runtime_name" ] && add_l1 24 15 " $runtime_icon $runtime_name "
+if [ "$rt_done" != "1" ]; then
+  [ -n "$runtime_name" ] && runtime_txt=" $runtime_icon $runtime_name "
+  [ -n "$rt_cf" ] && printf '%s' "$runtime_txt" > "$rt_cf" 2>/dev/null
+fi
+[ -n "$runtime_txt" ] && add_l1 24 15 "$runtime_txt"
 
 # PR + CI status (cached 60s)
 if [ "$COMPACT" != "1" ] && [ -n "$branch" ] && command -v gh >/dev/null 2>&1; then
@@ -381,7 +415,7 @@ fi
 add_l1 236 15 " $NF_CLOCK $time_str "
 
 # Claudefy update check (cached 24h)
-CLAUDEFY_VER='1.4.1'
+CLAUDEFY_VER='1.4.2'
 update_avail=""
 uc_file="/tmp/claudefy-update-check.json"
 latest_ver=""
@@ -507,7 +541,6 @@ op_hint=""
 if [ -n "$op" ]; then
   op_hint=$op
 else
-  model_id=$(get '.model.id')
   if echo "$model_id" | grep -qi 'opus'; then
     [ -n "$sd" ] && op_hint=$sd
   fi
@@ -538,7 +571,6 @@ if [ "$total_tok" -gt 0 ] 2>/dev/null; then
 fi
 
 # Turns (from transcript) + session widgets that need the transcript
-tp=$(get '.transcript_path')
 if [ -n "$tp" ] && [ -f "$tp" ]; then
   turns=$(grep -c '"type":"user"' "$tp" 2>/dev/null)
   if [ "$turns" -gt 0 ] 2>/dev/null; then
@@ -744,10 +776,12 @@ line1=$(render_line L1_BG L1_FG L1_TEXT)
 line2=$(render_line L2_BG L2_FG L2_TEXT)
 line4=$(render_line L4_BG L4_FG L4_TEXT)
 if [ "$COMPACT" = "1" ]; then
-  printf '%s\n%s' "$line1" "$line2"
+  out_final=$(printf '%s\n%s' "$line1" "$line2")
 elif [ "${#L3_BG[@]}" -gt 0 ]; then
   line3=$(render_line L3_BG L3_FG L3_TEXT)
-  printf '%s\n%s\n%s\n%s' "$line1" "$line2" "$line3" "$line4"
+  out_final=$(printf '%s\n%s\n%s\n%s' "$line1" "$line2" "$line3" "$line4")
 else
-  printf '%s\n%s\n%s' "$line1" "$line2" "$line4"
+  out_final=$(printf '%s\n%s\n%s' "$line1" "$line2" "$line4")
 fi
+printf '%s' "$out_final"
+{ printf '%s\n' "$rc_key"; printf '%s' "$out_final"; } > "$rc_file" 2>/dev/null

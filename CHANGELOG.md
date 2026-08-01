@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.2] - 2026-08-01
+
+### Changed — full 4-line statusline over SSH without flicker (macOS/Linux)
+- Field extraction collapsed from ~16 `jq` spawns to a single `jq` pass.
+- New render cache (TTL 10s): when the displayed values are unchanged, the
+  previous render is returned verbatim in ~20ms — byte-identical output lets
+  the host UI diff to a no-op instead of repainting, killing idle flicker.
+- Runtime detection (node/python/... version probes) cached 60s per cwd.
+- `CLAUDEFY_COMPACT=0` over SSH is now the recommended way to get all 4
+  lines remotely; compact remains the SSH default.
+
 ## [1.4.1] - 2026-08-01
 
 ### Fixed
