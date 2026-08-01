@@ -150,6 +150,16 @@ render_line() {
   printf '%s' "$out"
 }
 
+# ---------------------------------------------------------------------------
+# Compact mode — auto-on over SSH (remote redraws are expensive -> flicker).
+# Force with CLAUDEFY_COMPACT=1 (always) or CLAUDEFY_COMPACT=0 (never).
+# Compact renders 2 lines and skips gh/curl/devradar/runtime-detect calls.
+# ---------------------------------------------------------------------------
+COMPACT=${CLAUDEFY_COMPACT:-auto}
+if [ "$COMPACT" = "auto" ]; then
+  if [ -n "$SSH_CONNECTION" ] || [ -n "$SSH_TTY" ]; then COMPACT=1; else COMPACT=0; fi
+fi
+
 # ===========================================================================
 # LINE 1: Workspace context
 # ===========================================================================
@@ -207,7 +217,7 @@ fi
 
 # Runtime detection
 runtime_icon=""; runtime_name=""
-if [ -n "$cwd" ] && [ -d "$cwd" ]; then
+if [ "$COMPACT" != "1" ] && [ -n "$cwd" ] && [ -d "$cwd" ]; then
   if [ -f "$cwd/package.json" ] && command -v node >/dev/null 2>&1; then
     v=$(node --version 2>/dev/null | sed 's/^v//')
     [ -n "$v" ] && runtime_icon=$NF_NODE && runtime_name="Node $v"
@@ -241,7 +251,7 @@ fi
 [ -n "$runtime_name" ] && add_l1 24 15 " $runtime_icon $runtime_name "
 
 # PR + CI status (cached 60s)
-if [ -n "$branch" ] && command -v gh >/dev/null 2>&1; then
+if [ "$COMPACT" != "1" ] && [ -n "$branch" ] && command -v gh >/dev/null 2>&1; then
   cache_key=$(echo "${cwd}|${branch}" | tr '/\\:*?"<>|' '_')
   cache_file="/tmp/claude-pr-cache-$cache_key.json"
   pr=""
@@ -299,7 +309,7 @@ fi
 add_l1 236 15 " $NF_CLOCK $time_str "
 
 # Claudefy update check (cached 24h)
-CLAUDEFY_VER='1.3.4'
+CLAUDEFY_VER='1.3.5'
 update_avail=""
 uc_file="/tmp/claudefy-update-check.json"
 latest_ver=""
@@ -314,7 +324,7 @@ if [ -f "$uc_file" ]; then
     fi
   fi
 fi
-if $need_check && command -v curl >/dev/null 2>&1; then
+if [ "$COMPACT" != "1" ] && $need_check && command -v curl >/dev/null 2>&1; then
   api_resp=$(curl -s --max-time 3 -H 'User-Agent: Claudefy' 'https://api.github.com/repos/hasoftware/Claudefy/releases/latest' 2>/dev/null)
   if [ -n "$api_resp" ]; then
     latest_ver=$(echo "$api_resp" | jq -r '.tag_name // empty' 2>/dev/null | sed 's/^v//')
@@ -341,7 +351,7 @@ fi
 
 # .env safety check (cached 5min)
 env_warning=false
-if [ -n "$cwd" ] && [ -d "$cwd" ]; then
+if [ "$COMPACT" != "1" ] && [ -n "$cwd" ] && [ -d "$cwd" ]; then
   env_ck=$(echo "$cwd" | tr '/\\:*?"<>|' '_')
   env_cf="/tmp/claudefy-env-$env_ck.txt"
   need_ec=true
@@ -447,7 +457,7 @@ fi
 L3_BG=(); L3_FG=(); L3_TEXT=()
 add_l3() { L3_BG+=("$1"); L3_FG+=("$2"); L3_TEXT+=("$3"); }
 
-if [ -n "$cwd" ] && [ -d "$cwd" ] && command -v devradar >/dev/null 2>&1; then
+if [ "$COMPACT" != "1" ] && [ -n "$cwd" ] && [ -d "$cwd" ] && command -v devradar >/dev/null 2>&1; then
   head_sha=$(git -C "$cwd" rev-parse HEAD 2>/dev/null)
   cache_key_raw="${cwd}|${head_sha}"
   dr_cache_key=$(echo "$cache_key_raw" | tr '/\\:*?"<>|' '_')
@@ -505,7 +515,9 @@ add_l4 237 208 " Author: HoangAnhDev "
 line1=$(render_line L1_BG L1_FG L1_TEXT)
 line2=$(render_line L2_BG L2_FG L2_TEXT)
 line4=$(render_line L4_BG L4_FG L4_TEXT)
-if [ "${#L3_BG[@]}" -gt 0 ]; then
+if [ "$COMPACT" = "1" ]; then
+  printf '%s\n%s' "$line1" "$line2"
+elif [ "${#L3_BG[@]}" -gt 0 ]; then
   line3=$(render_line L3_BG L3_FG L3_TEXT)
   printf '%s\n%s\n%s\n%s' "$line1" "$line2" "$line3" "$line4"
 else
