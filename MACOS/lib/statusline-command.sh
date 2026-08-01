@@ -79,6 +79,9 @@ DOT_OPEN=$'\xe2\x97\x8b'    # U+25CB
 ARROW_UP=$'\xe2\x86\x91'    # U+2191
 ARROW_DN=$'\xe2\x86\x93'    # U+2193
 ARROW_RT=$'\xe2\x86\x92'    # U+2192
+ICON_UP=$'\xe2\xac\x86'     # U+2B06 ⬆
+ICON_WARN=$'\xe2\x9a\xa0'   # U+26A0 ⚠
+ICON_TURNS=$'\xef\x81\xb5'  # U+F075 comment bubble
 
 # ---------------------------------------------------------------------------
 # Color helpers
@@ -129,14 +132,13 @@ SEGS_TEXT=()
 add_seg() { SEGS_BG+=("$1"); SEGS_FG+=("$2"); SEGS_TEXT+=("$3"); }
 
 render_line() {
-  local -n bgs=$1
-  local -n fgs=$2
-  local -n txts=$3
-  local n=${#bgs[@]}
+  # $1/$2/$3 = NAMES of bg/fg/text arrays. No namerefs (local -n needs
+  # bash 4.3+; macOS ships bash 3.2) — indirect access via eval instead.
+  local n i bg fg text out="" prev=""
+  eval "n=\${#${1}[@]}"
   [ "$n" -eq 0 ] && { echo ""; return; }
-  local out="" prev=""
   for ((i=0; i<n; i++)); do
-    local bg=${bgs[i]} fg=${fgs[i]} text=${txts[i]}
+    eval "bg=\${${1}[i]}; fg=\${${2}[i]}; text=\${${3}[i]}"
     if [ -n "$prev" ]; then
       out+="${ESC}[38;5;${prev};48;5;${bg}m${NF_ARROW}"
     fi
@@ -296,7 +298,7 @@ fi
 add_l1 236 15 " $NF_CLOCK $time_str "
 
 # Claudefy update check (cached 24h)
-CLAUDEFY_VER='1.2.0'
+CLAUDEFY_VER='1.3.4'
 update_avail=""
 uc_file="/tmp/claudefy-update-check.json"
 latest_ver=""
@@ -333,7 +335,7 @@ if [ -n "$latest_ver" ] && ver_gt "$latest_ver" "$CLAUDEFY_VER"; then
   update_avail="$latest_ver"
 fi
 if [ -n "$update_avail" ]; then
-  add_l1 166 15 " $'\xe2\xac\x86' v$update_avail "
+  add_l1 166 15 " $ICON_UP v$update_avail "
 fi
 
 # .env safety check (cached 5min)
@@ -362,7 +364,7 @@ if [ -n "$cwd" ] && [ -d "$cwd" ]; then
   fi
 fi
 if $env_warning; then
-  add_l1 88 15 " $'\xe2\x9a\xa0' .env "
+  add_l1 88 15 " $ICON_WARN .env "
 fi
 
 # ===========================================================================
@@ -434,7 +436,7 @@ tp=$(get '.transcript_path')
 if [ -n "$tp" ] && [ -f "$tp" ]; then
   turns=$(grep -c '"type":"user"' "$tp" 2>/dev/null)
   if [ "$turns" -gt 0 ] 2>/dev/null; then
-    add_l2 24 15 " $'\xef\x81\xb5' $turns turns "
+    add_l2 24 15 " $ICON_TURNS $turns turns "
   fi
 fi
 

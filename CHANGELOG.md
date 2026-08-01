@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.4] - 2026-08-01
+
+### Fixed
+- macOS statusline rendered nothing: `render_line` used `local -n`
+  (namerefs, bash 4.3+) but macOS ships bash 3.2. Rewritten with
+  `eval`-based indirection in both macOS and Linux statuslines.
+- Update badge / .env warning / turns counter printed literal `$'\xe2...'`
+  instead of icons ($'..' has no meaning inside double quotes).
+- Statusline branding stuck at v1.2.0, causing a false "update available"
+  badge; version strings synced to the package version.
+
 ## [1.3.3] - 2026-08-01
 
 ### Fixed
