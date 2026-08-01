@@ -7,7 +7,7 @@ $env:TEMP/
 
 # npm
 node_modules/
-.npmrc
+
 
 # IDE
 .vscode/
@@ -17,3 +17,4 @@ node_modules/
 Thumbs.db
 desktop.ini
 .DS_Store
+.npmrc*
