@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.3] - 2026-08-01
+
+### Changed
+- Line 3 tech segment: when DevRadar detects no framework (shell repos,
+  Swift projects, ...), fall back to the dominant language instead of
+  hiding the segment.
+- Burn rate `($/h)` is hidden when session cost is 0 (subscription
+  sessions without cost data).
+
 ## [1.4.2] - 2026-08-01
 
 ### Changed — full 4-line statusline over SSH without flicker (macOS/Linux)

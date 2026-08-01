@@ -544,7 +544,7 @@ if ($null -ne $durMs) {
 $line1 += @{ bg = 236; fg = 15; text = " $NF_CLOCK $timeStr " }
 
 # Claudefy update check (cached 24h)
-$CLAUDEFY_VER = '1.4.2'
+$CLAUDEFY_VER = '1.4.3'
 $updateAvail = $null
 try {
   $ucFile = "$env:TEMP\claudefy-update-check.json"
@@ -665,7 +665,7 @@ if ($null -ne $cost) {
   $cstr = "{0:N2}" -f [double]$cost
   $ctxt = " $NF_USD `$$cstr"
   # Widget: burn rate $/h (needs >5 min of session for a stable number)
-  if ($null -ne $durMs -and [double]$durMs -gt 300000) {
+  if ($null -ne $durMs -and [double]$durMs -gt 300000 -and [double]$cost -gt 0) {
     $rate = "{0:N1}" -f ([double]$cost * 3600000 / [double]$durMs)
     $ctxt += " (`$$rate/h)"
   }
@@ -841,10 +841,14 @@ if ($cwd -and (Test-Path $cwd) -and (Get-Command devradar -ErrorAction SilentlyC
     } catch {}
   }
   if ($devradar -and $devradar.summary.codeLines) {
+    $fwList = $null
     if ($devradar.technologies.frameworks -and $devradar.technologies.frameworks.Count -gt 0) {
       $fwList = ($devradar.technologies.frameworks -join [char]0x00B7)
-      $line3 += @{ bg = 60; fg = 15; text = " $NF_CUBE $fwList " }
+    } elseif ($devradar.byLanguage -and $devradar.byLanguage.Count -gt 0) {
+      # No framework detected -> fall back to the dominant language
+      $fwList = $devradar.byLanguage[0].language
     }
+    if ($fwList) { $line3 += @{ bg = 60; fg = 15; text = " $NF_CUBE $fwList " } }
 
     $loc = [int]$devradar.summary.codeLines
     $locStr = if ($loc -ge 1e6) { "{0:N1}M" -f ($loc/1e6) }

@@ -415,7 +415,7 @@ fi
 add_l1 236 15 " $NF_CLOCK $time_str "
 
 # Claudefy update check (cached 24h)
-CLAUDEFY_VER='1.4.2'
+CLAUDEFY_VER='1.4.3'
 update_avail=""
 uc_file="/tmp/claudefy-update-check.json"
 latest_ver=""
@@ -556,7 +556,7 @@ fi
 if [ -n "$cost" ]; then
   cost_txt=" $NF_USD \$$(printf '%.2f' "$cost")"
   # Widget: burn rate $/h (needs >5 min of session for a stable number)
-  if [ "$dur_ms" -gt 300000 ] 2>/dev/null; then
+  if [ "$dur_ms" -gt 300000 ] 2>/dev/null && awk -v c="$cost" 'BEGIN{ exit !(c > 0) }' 2>/dev/null; then
     rate=$(awk -v c="$cost" -v d="$dur_ms" 'BEGIN{ if (d > 0) printf "%.1f", c * 3600000 / d }')
     [ -n "$rate" ] && cost_txt+=" (\$$rate/h)"
   fi
@@ -705,6 +705,8 @@ if [ "$COMPACT" != "1" ] && [ -n "$cwd" ] && [ -d "$cwd" ] && command -v devrada
     code_lines=$(echo "$dr_data" | jq -r '.summary.codeLines // 0' 2>/dev/null)
     if [ "$code_lines" -gt 0 ] 2>/dev/null; then
       fw_list=$(echo "$dr_data" | jq -r '.technologies.frameworks // [] | join("·")' 2>/dev/null)
+      # No framework detected -> fall back to the dominant language
+      [ -z "$fw_list" ] && fw_list=$(echo "$dr_data" | jq -r '.byLanguage[0].language // empty' 2>/dev/null)
       [ -n "$fw_list" ] && add_l3 60 15 " $NF_CUBE $fw_list "
 
       loc_str=$(human_tokens "$code_lines")
