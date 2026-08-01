@@ -83,8 +83,11 @@ Colors shift dynamically as thresholds are crossed: green below 50 percent, oran
 
 ## Features
 
-**Powerline status bar (2 to 3 lines)**
+**Powerline status bar (2 to 4 lines)**
 Runtime detection, git state, open PRs, CI status, quota usage, session cost, token totals, and a Hanoi clock. A third line appears when [DevRadar](https://github.com/hasoftware/DevRadar) is installed (`npm install -g @hasoftware/devradar`), showing total lines of code, detected framework, and code ratio.
+
+**18 smart widgets (v1.4.0)**
+Safety and awareness built in: permission-mode badge (YOLO/Plan/AutoEdit), red alert when editing directly on main, battery, Docker containers, dev-server port probe, burn rate `$/h`, quota pace + reset countdown, auto-compact forecast (`~N turns→compact`), session velocity and phase (build vs explore), compact count, idle timer, uncommitted-pile warning, branch age vs main, merge-conflict radar, total output tokens today, and a usage streak. Everything expensive is cached and auto-skipped over SSH.
 
 **Stop hook with notifications**
 Plays a chime and shows a native toast when Claude finishes responding. Upgrades to an urgent alert when your quota is nearly exhausted, so you never miss a long-running task.

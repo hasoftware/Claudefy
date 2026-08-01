@@ -45,6 +45,10 @@ dur_ms=$(geti '.cost.total_duration_ms')
 in_tok=$(geti '.context_window.total_input_tokens')
 out_tok=$(geti '.context_window.total_output_tokens')
 
+session_id=$(get '.session_id')
+perm=$(get '.permission_mode')
+[ -z "$perm" ] && perm=$(get '.permissionMode')
+
 # ---------------------------------------------------------------------------
 # ANSI + Nerd Font icons (UTF-8 byte sequences)
 # ---------------------------------------------------------------------------
@@ -83,6 +87,16 @@ ARROW_RT=$'\xe2\x86\x92'    # U+2192
 ICON_UP=$'\xe2\xac\x86'     # U+2B06
 ICON_WARN=$'\xe2\x9a\xa0'   # U+26A0
 ICON_TURNS=$'\xef\x81\xb5'  # U+F075 comment bubble
+NF_BATT=$'\xef\x89\x80'     # U+F240 battery
+NF_DOCKER=$'\xef\x8c\x88'   # U+F308 docker whale
+NF_GLOBE=$'\xef\x82\xac'    # U+F0AC globe
+NF_SEARCH=$'\xef\x80\x82'   # U+F002 magnifier
+NF_MOON=$'\xef\x86\x86'     # U+F186 moon (idle)
+NF_TROPHY=$'\xef\x82\x91'   # U+F091 trophy
+NF_BOMB=$'\xef\x87\xa2'     # U+F1E2 bomb (merge conflicts)
+ICON_RECYCLE=$'\xe2\x99\xbb'   # U+267B recycle (compact count)
+ICON_HOURGLASS=$'\xe2\x8c\x9b' # U+231B hourglass
+ICON_SIGMA=$'\xce\xa3'         # U+03A3 sigma
 
 # ---------------------------------------------------------------------------
 # Color helpers
@@ -123,6 +137,14 @@ human_tokens() {
 
 # Round percent to integer
 pct_fmt() { local p=$1; printf '%.0f' "$p" 2>/dev/null; }
+
+# Seconds since a file's mtime; prints nothing if the file is missing
+file_age() {
+  local m
+  m=$(stat -c %Y "$1" 2>/dev/null)
+  [ -z "$m" ] && return 1
+  echo $(( $(date -u +%s) - m ))
+}
 
 # ---------------------------------------------------------------------------
 # Segment collector
@@ -193,6 +215,10 @@ if [ -n "$cwd" ] && [ -d "$cwd" ]; then
     gbg=28
     [ "$dirty"  -gt 0 ] 2>/dev/null && gbg=130
     [ "$behind" -gt 0 ] 2>/dev/null && gbg=88
+    # Widget: editing directly on main/master -> red alert
+    case "$branch" in
+      main|master) [ "$dirty" -gt 0 ] 2>/dev/null && gbg=88 ;;
+    esac
     add_l1 "$gbg" 15 " $gtxt "
 
     # Stash
@@ -290,6 +316,52 @@ if [ "$COMPACT" != "1" ] && [ -n "$branch" ] && command -v gh >/dev/null 2>&1; t
   fi
 fi
 
+# Widget: battery (laptops — shown when discharging or low)
+if [ "$COMPACT" != "1" ]; then
+  batt_dir=$(ls -d /sys/class/power_supply/BAT* 2>/dev/null | head -1)
+  if [ -n "$batt_dir" ] && [ -f "$batt_dir/capacity" ]; then
+    batt_pct=$(cat "$batt_dir/capacity" 2>/dev/null)
+    batt_state=$(cat "$batt_dir/status" 2>/dev/null | tr 'A-Z' 'a-z')
+    if [ -n "$batt_pct" ] && { [ "$batt_state" = "discharging" ] || [ "$batt_pct" -le 30 ] 2>/dev/null; }; then
+      bb=240
+      [ "$batt_pct" -le 50 ] 2>/dev/null && bb=130
+      [ "$batt_pct" -le 20 ] 2>/dev/null && bb=88
+      add_l1 "$bb" 15 " $NF_BATT $batt_pct% "
+    fi
+  fi
+fi
+
+# Widget: running Docker containers (cached 60s)
+if [ "$COMPACT" != "1" ] && command -v docker >/dev/null 2>&1; then
+  dk_cf="/tmp/claudefy-docker.txt"
+  dk_age=$(file_age "$dk_cf")
+  if [ -z "$dk_age" ] || [ "$dk_age" -ge 60 ] 2>/dev/null; then
+    docker ps -q 2>/dev/null | wc -l | tr -d ' ' > "$dk_cf"
+  fi
+  dk_n=$(cat "$dk_cf" 2>/dev/null)
+  if [ "$dk_n" -gt 0 ] 2>/dev/null; then
+    add_l1 25 15 " $NF_DOCKER $dk_n "
+  fi
+fi
+
+# Widget: dev server alive on a common port (instant probe via /dev/tcp)
+if [ "$COMPACT" != "1" ]; then
+  srv_port=""
+  for p in 3000 5173 8080 4200 8000; do
+    if (echo >"/dev/tcp/127.0.0.1/$p") 2>/dev/null; then srv_port=$p; break; fi
+  done
+  [ -n "$srv_port" ] && add_l1 29 15 " $NF_GLOBE :$srv_port "
+fi
+
+# Widget: permission mode — safety cue, shown even in compact mode
+if [ -n "$perm" ]; then
+  case "$perm" in
+    bypassPermissions) add_l1 88 15 " $ICON_WARN YOLO " ;;
+    plan)              add_l1 61 15 " $NF_PEN Plan " ;;
+    acceptEdits)       add_l1 130 0  " $NF_PEN AutoEdit " ;;
+  esac
+fi
+
 # Model
 add_l1 208 0 " $NF_CHIP $model "
 
@@ -309,7 +381,7 @@ fi
 add_l1 236 15 " $NF_CLOCK $time_str "
 
 # Claudefy update check (cached 24h)
-CLAUDEFY_VER='1.3.5'
+CLAUDEFY_VER='1.4.0'
 update_avail=""
 uc_file="/tmp/claudefy-update-check.json"
 latest_ver=""
@@ -390,7 +462,24 @@ if [ -n "$ctx" ]; then
 fi
 if [ -n "$fh" ]; then
   bg=$(bg_used "$fh" 22)
+  fh_int=${fh%.*}
   txt=" $NF_TIMER 5h: $(pct_fmt "$fh")%"
+  if [ -n "$fh_reset" ]; then
+    now_s=$(date -u +%s)
+    rem_s=$((fh_reset - now_s))
+    if [ "$rem_s" -gt 0 ] 2>/dev/null && [ "$rem_s" -le 18000 ] 2>/dev/null; then
+      # Widget: quota pace — burning faster than the 5h window elapses
+      elapsed_pct=$(( (18000 - rem_s) * 100 / 18000 ))
+      if [ "$fh_int" -gt $((elapsed_pct + 15)) ] 2>/dev/null; then
+        [ "$bg" = "22" ] && bg=130
+        txt+="$ARROW_UP"
+      fi
+      # Widget: countdown to reset once quota is high
+      if [ "$fh_int" -ge 70 ] 2>/dev/null; then
+        txt+=" (-$((rem_s / 60))m)"
+      fi
+    fi
+  fi
   reset_t=$(to_hanoi "$fh_reset")
   [ -n "$reset_t" ] && txt+=" $ARROW_RT$reset_t"
   txt+=" "
@@ -432,7 +521,13 @@ if [ -n "$op_hint" ]; then
   fi
 fi
 if [ -n "$cost" ]; then
-  add_l2 94 15 " $NF_USD \$$(printf '%.2f' "$cost") "
+  cost_txt=" $NF_USD \$$(printf '%.2f' "$cost")"
+  # Widget: burn rate $/h (needs >5 min of session for a stable number)
+  if [ "$dur_ms" -gt 300000 ] 2>/dev/null; then
+    rate=$(awk -v c="$cost" -v d="$dur_ms" 'BEGIN{ if (d > 0) printf "%.1f", c * 3600000 / d }')
+    [ -n "$rate" ] && cost_txt+=" (\$$rate/h)"
+  fi
+  add_l2 94 15 "$cost_txt "
 fi
 if [ "$added" -gt 0 ] 2>/dev/null || [ "$removed" -gt 0 ] 2>/dev/null; then
   add_l2 22 15 " $NF_PEN +$added -$removed "
@@ -442,12 +537,61 @@ if [ "$total_tok" -gt 0 ] 2>/dev/null; then
   add_l2 24 15 " $NF_HASH $(human_tokens $total_tok) "
 fi
 
-# Turns (from transcript)
+# Turns (from transcript) + session widgets that need the transcript
 tp=$(get '.transcript_path')
 if [ -n "$tp" ] && [ -f "$tp" ]; then
   turns=$(grep -c '"type":"user"' "$tp" 2>/dev/null)
   if [ "$turns" -gt 0 ] 2>/dev/null; then
-    add_l2 24 15 " $ICON_TURNS $turns turns "
+    turns_txt=" $ICON_TURNS $turns turns"
+    # Widget: session velocity (turns/hour, needs >10 min)
+    if [ "$dur_ms" -gt 600000 ] 2>/dev/null; then
+      turns_txt+=" ($(( turns * 3600000 / dur_ms ))/h)"
+    fi
+    add_l2 24 15 "$turns_txt "
+
+    # Widget: auto-compact forecast — per-session context burn rate.
+    # First render stores (turns, ctx); later renders extrapolate to ~10% left.
+    if [ "$COMPACT" != "1" ] && [ -n "$ctx" ] && [ -n "$session_id" ]; then
+      ctx_int=${ctx%.*}
+      fc_cf="/tmp/claudefy-ctx-$session_id.txt"
+      if [ ! -f "$fc_cf" ]; then
+        echo "$turns $ctx_int" > "$fc_cf"
+      else
+        read t0 c0 < "$fc_cf"
+        fc_dt=$((turns - t0)); fc_dc=$((c0 - ctx_int))
+        if [ "$fc_dt" -ge 3 ] 2>/dev/null && [ "$fc_dc" -gt 0 ] 2>/dev/null && [ "$ctx_int" -le 60 ] 2>/dev/null; then
+          fc_left=$(( (ctx_int - 10) * fc_dt / fc_dc ))
+          if [ "$fc_left" -ge 0 ] && [ "$fc_left" -le 30 ]; then
+            fb=130; [ "$fc_left" -le 5 ] && fb=88
+            add_l2 "$fb" 15 " $ICON_HOURGLASS ~${fc_left} turns${ARROW_RT}compact "
+          fi
+        fi
+      fi
+    fi
+  fi
+
+  if [ "$COMPACT" != "1" ]; then
+    # Widget: session phase — exploring vs building, from recent tool calls
+    recent=$(tail -c 150000 "$tp" 2>/dev/null)
+    build_n=$(printf '%s' "$recent" | grep -oE '"name":"(Edit|Write|NotebookEdit)"' | wc -l | tr -d ' ')
+    explore_n=$(printf '%s' "$recent" | grep -oE '"name":"(Read|Grep|Glob)"' | wc -l | tr -d ' ')
+    if [ $((build_n + explore_n)) -ge 5 ] 2>/dev/null; then
+      if [ "$build_n" -ge "$explore_n" ] 2>/dev/null; then
+        add_l2 22 15 " $NF_PEN build "
+      else
+        add_l2 24 15 " $NF_SEARCH explore "
+      fi
+    fi
+
+    # Widget: compact count — how many times this session lost its memory
+    cpt=$(grep -c 'compact_boundary' "$tp" 2>/dev/null)
+    [ "$cpt" -gt 0 ] 2>/dev/null && add_l2 58 15 " $ICON_RECYCLE ${cpt}x "
+
+    # Widget: idle time since the transcript was last written
+    tp_age=$(file_age "$tp")
+    if [ -n "$tp_age" ] && [ "$tp_age" -ge 600 ] 2>/dev/null; then
+      add_l2 240 15 " $NF_MOON idle $((tp_age / 60))m "
+    fi
   fi
 fi
 
@@ -456,6 +600,49 @@ fi
 # ===========================================================================
 L3_BG=(); L3_FG=(); L3_TEXT=()
 add_l3() { L3_BG+=("$1"); L3_FG+=("$2"); L3_TEXT+=("$3"); }
+
+# --- Git health widgets: uncommitted pile, branch age, conflict radar ------
+if [ "$COMPACT" != "1" ] && [ -n "$branch" ]; then
+  # Widget: big uncommitted pile — AI writes fast, commit before you drown
+  if [ "$dirty" -gt 0 ] 2>/dev/null; then
+    ucl=$( { git -C "$cwd" diff --numstat 2>/dev/null; git -C "$cwd" diff --cached --numstat 2>/dev/null; } \
+          | awk '{s += $1 + $2} END {print s + 0}')
+    if [ "$ucl" -ge 300 ] 2>/dev/null; then
+      ub=130; [ "$ucl" -ge 800 ] 2>/dev/null && ub=88
+      add_l3 "$ub" 15 " $ICON_WARN $ucl uncommitted "
+    fi
+  fi
+
+  # Branch age vs main + conflict radar (cached 5 min per cwd|branch)
+  main_ref=""
+  if [ "$branch" != "main" ] && [ "$branch" != "master" ]; then
+    if git -C "$cwd" show-ref --verify --quiet refs/heads/main 2>/dev/null; then main_ref=main
+    elif git -C "$cwd" show-ref --verify --quiet refs/heads/master 2>/dev/null; then main_ref=master; fi
+  fi
+  if [ -n "$main_ref" ]; then
+    gh_ck=$(echo "${cwd}|${branch}" | tr '/\\:*?"<>|' '_')
+    gh_cf="/tmp/claudefy-githealth-$gh_ck.txt"
+    gh_age=$(file_age "$gh_cf")
+    if [ -z "$gh_age" ] || [ "$gh_age" -ge 300 ] 2>/dev/null; then
+      b_age=0; b_behind=0; b_conf=0
+      base=$(git -C "$cwd" merge-base HEAD "$main_ref" 2>/dev/null)
+      if [ -n "$base" ]; then
+        base_ts=$(git -C "$cwd" show -s --format=%ct "$base" 2>/dev/null)
+        [ -n "$base_ts" ] && b_age=$(( ( $(date -u +%s) - base_ts ) / 86400 ))
+        b_behind=$(git -C "$cwd" rev-list --count "HEAD..$main_ref" 2>/dev/null)
+        # Conflict radar: merge-tree exits 1 iff the merge would conflict (git >= 2.38)
+        git -C "$cwd" merge-tree --write-tree HEAD "$main_ref" >/dev/null 2>&1
+        [ $? -eq 1 ] && b_conf=1
+      fi
+      echo "$b_age ${b_behind:-0} $b_conf" > "$gh_cf"
+    fi
+    read b_age b_behind b_conf < "$gh_cf"
+    if [ "$b_age" -ge 3 ] 2>/dev/null || [ "$b_behind" -ge 10 ] 2>/dev/null; then
+      add_l3 64 15 " $NF_GIT ${b_age}d $ARROW_DN$b_behind "
+    fi
+    [ "$b_conf" = "1" ] && add_l3 88 15 " $NF_BOMB merge conflicts "
+  fi
+fi
 
 if [ "$COMPACT" != "1" ] && [ -n "$cwd" ] && [ -d "$cwd" ] && command -v devradar >/dev/null 2>&1; then
   head_sha=$(git -C "$cwd" rev-parse HEAD 2>/dev/null)
@@ -505,6 +692,47 @@ fi
 # ===========================================================================
 L4_BG=(); L4_FG=(); L4_TEXT=()
 add_l4() { L4_BG+=("$1"); L4_FG+=("$2"); L4_TEXT+=("$3"); }
+
+# Widget: total output tokens across ALL sessions today (cached 5 min).
+# (Transcripts no longer carry per-message cost, so tokens are the honest sum.)
+if [ "$COMPACT" != "1" ] && [ -d "$HOME/.claude/projects" ]; then
+  ct_cf="/tmp/claudefy-tokens-today.txt"
+  ct_age=$(file_age "$ct_cf")
+  if [ -z "$ct_age" ] || [ "$ct_age" -ge 300 ] 2>/dev/null; then
+    find "$HOME/.claude/projects" -name '*.jsonl' -newermt "$(date +%Y-%m-%d) 00:00:00" -print0 2>/dev/null \
+      | xargs -0 grep -h -o '"output_tokens":[0-9]*' 2>/dev/null \
+      | awk -F: '{s += $2} END {print s + 0}' > "$ct_cf"
+  fi
+  ct_sum=$(cat "$ct_cf" 2>/dev/null)
+  if [ "$ct_sum" -gt 0 ] 2>/dev/null; then
+    add_l4 94 15 " $ICON_SIGMA $(human_tokens "$ct_sum") out today "
+  fi
+fi
+
+# Widget: usage streak — consecutive days with Claude Code activity (cached 1h)
+if [ "$COMPACT" != "1" ] && [ -d "$HOME/.claude/projects" ]; then
+  st_cf="/tmp/claudefy-streak.txt"
+  st_age=$(file_age "$st_cf")
+  if [ -z "$st_age" ] || [ "$st_age" -ge 3600 ] 2>/dev/null; then
+    st_dates=$(find "$HOME/.claude/projects" -name '*.jsonl' -mtime -40 \
+      -printf '%TY-%Tm-%Td\n' 2>/dev/null | sort -u)
+    streak=0; sd_i=0
+    while [ "$sd_i" -lt 40 ]; do
+      d=$(date -d "-${sd_i} day" +%Y-%m-%d 2>/dev/null)
+      [ -z "$d" ] && break
+      if echo "$st_dates" | grep -q "^$d$"; then
+        streak=$((streak + 1)); sd_i=$((sd_i + 1))
+      else
+        # today may have no finished write yet — skip day 0 once
+        if [ "$sd_i" -eq 0 ]; then sd_i=1; continue; fi
+        break
+      fi
+    done
+    echo "$streak" > "$st_cf"
+  fi
+  streak=$(cat "$st_cf" 2>/dev/null)
+  [ "$streak" -ge 2 ] 2>/dev/null && add_l4 58 15 " $NF_TROPHY ${streak}d streak "
+fi
 
 add_l4 237 75 " Claudefy v$CLAUDEFY_VER "
 add_l4 237 208 " Author: HoangAnhDev "

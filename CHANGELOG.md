@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-08-01
+
+### Added — 18 smart widgets across all three platforms
+- **Line 1**: permission-mode badge (YOLO/Plan/AutoEdit — shown even in SSH
+  compact mode), on-main red alert when editing directly on main/master,
+  battery (discharging/low), running Docker containers, dev-server port probe
+  (3000/5173/8080/4200/8000).
+- **Line 2**: burn rate `$/h` inside the cost segment, quota pace arrow when
+  burning faster than the 5h window elapses, reset countdown once 5h >= 70%,
+  auto-compact forecast (`~N turns -> compact`), session velocity (turns/h),
+  session phase (build vs explore), compact count, idle timer.
+- **Line 3**: uncommitted-pile warning (>=300 changed lines), branch age vs
+  main with behind count, conflict radar via `git merge-tree` (git >= 2.38).
+- **Line 4**: total output tokens across all sessions today, usage streak
+  (consecutive days).
+- All expensive widgets are cached (15s–1h TTL) and skipped in SSH compact
+  mode; every widget degrades gracefully when its data source is missing.
+
 ## [1.3.5] - 2026-08-01
 
 ### Added

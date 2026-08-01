@@ -269,6 +269,13 @@ $NF_CODE     = [char]0xF121
 $NF_CUBE     = [char]0xF1B2
 $NF_PIE      = [char]0xF200
 $NF_ARROW    = [char]0xE0B0
+$NF_BATT     = [char]0xF240
+$NF_DOCKER   = [char]0xF308
+$NF_GLOBE    = [char]0xF0AC
+$NF_SEARCH   = [char]0xF002
+$NF_MOON     = [char]0xF186
+$NF_TROPHY   = [char]0xF091
+$NF_BOMB     = [char]0xF1E2
 
 function BgUsed([double]$pct, [int]$goodColor = 22) {
   if ($pct -ge 80) { return 88 }
@@ -341,6 +348,8 @@ if ($cwd -and (Test-Path $cwd)) {
     $gbg = 28
     if ($dirty -gt 0)  { $gbg = 130 }
     if ($behind -gt 0) { $gbg = 88 }
+    # Widget: editing directly on main/master -> red alert
+    if (($branch -eq 'main' -or $branch -eq 'master') -and $dirty -gt 0) { $gbg = 88 }
     $line1 += @{ bg = $gbg; fg = 15; text = " $gtxt " }
 
     $stashCount = (& git -C $cwd stash list 2>$null | Measure-Object).Count
@@ -454,6 +463,72 @@ if ($branch -and (Get-Command gh -ErrorAction SilentlyContinue)) {
   }
 }
 
+# Widget: battery (laptops — shown when discharging or low; cached 60s)
+$btCF = "$env:TEMP\claudefy-batt.txt"
+$btRefresh = $true
+if (Test-Path $btCF) {
+  $btAge = (Get-Date).ToUniversalTime() - (Get-Item $btCF).LastWriteTimeUtc
+  if ($btAge.TotalSeconds -lt 60) { $btRefresh = $false }
+}
+if ($btRefresh) {
+  $bLine = ''
+  try {
+    $batt = Get-CimInstance Win32_Battery -ErrorAction Stop | Select-Object -First 1
+    if ($batt) { $bLine = "$([int]$batt.EstimatedChargeRemaining) $($batt.BatteryStatus)" }
+  } catch {}
+  Set-Content $btCF -Value $bLine -Encoding UTF8
+}
+$bRaw = ''
+try { $bRaw = ((Get-Content $btCF -Raw).Trim()) } catch {}
+if ($bRaw) {
+  $bParts = $bRaw -split '\s+'
+  $bPct = [int]$bParts[0]
+  $bStat = if ($bParts.Count -gt 1) { $bParts[1] } else { '' }
+  if ($bStat -eq '1' -or $bPct -le 30) {
+    $bb = 240
+    if ($bPct -le 50) { $bb = 130 }
+    if ($bPct -le 20) { $bb = 88 }
+    $line1 += @{ bg = $bb; fg = 15; text = " $NF_BATT $bPct% " }
+  }
+}
+
+# Widget: running Docker containers (cached 60s)
+if (Get-Command docker -ErrorAction SilentlyContinue) {
+  $dkCF = "$env:TEMP\claudefy-docker.txt"
+  $dkRefresh = $true
+  if (Test-Path $dkCF) {
+    $dkAge = (Get-Date).ToUniversalTime() - (Get-Item $dkCF).LastWriteTimeUtc
+    if ($dkAge.TotalSeconds -lt 60) { $dkRefresh = $false }
+  }
+  if ($dkRefresh) {
+    $dkNew = (& docker ps -q 2>$null | Measure-Object).Count
+    Set-Content $dkCF -Value $dkNew -Encoding UTF8
+  }
+  $dkN = 0
+  try { $dkN = [int](Get-Content $dkCF -Raw).Trim() } catch {}
+  if ($dkN -gt 0) { $line1 += @{ bg = 25; fg = 15; text = " $NF_DOCKER $dkN " } }
+}
+
+# Widget: dev server alive on a common port (quick TCP probe)
+$srvPort = $null
+foreach ($p in 3000, 5173, 8080, 4200, 8000) {
+  $tc = New-Object System.Net.Sockets.TcpClient
+  try {
+    $iar = $tc.BeginConnect('127.0.0.1', $p, $null, $null)
+    if ($iar.AsyncWaitHandle.WaitOne(120) -and $tc.Connected) { $srvPort = $p }
+  } catch {}
+  $tc.Close()
+  if ($srvPort) { break }
+}
+if ($srvPort) { $line1 += @{ bg = 29; fg = 15; text = " $NF_GLOBE :$srvPort " } }
+
+# Widget: permission mode — safety cue
+$perm = $d.permission_mode
+if (-not $perm) { $perm = $d.permissionMode }
+if ($perm -eq 'bypassPermissions') { $line1 += @{ bg = 88;  fg = 15; text = " $([char]0x26A0) YOLO " } }
+elseif ($perm -eq 'plan')          { $line1 += @{ bg = 61;  fg = 15; text = " $NF_PEN Plan " } }
+elseif ($perm -eq 'acceptEdits')   { $line1 += @{ bg = 130; fg = 0;  text = " $NF_PEN AutoEdit " } }
+
 $line1 += @{ bg = 208; fg = 0; text = " $NF_CHIP $model " }
 
 $nowHanoi = (Get-Date).ToUniversalTime().AddHours(7).ToString('HH:mm')
@@ -469,7 +544,7 @@ if ($null -ne $durMs) {
 $line1 += @{ bg = 236; fg = 15; text = " $NF_CLOCK $timeStr " }
 
 # Claudefy update check (cached 24h)
-$CLAUDEFY_VER = '1.3.5'
+$CLAUDEFY_VER = '1.4.0'
 $updateAvail = $null
 try {
   $ucFile = "$env:TEMP\claudefy-update-check.json"
@@ -526,6 +601,23 @@ $fh = $d.rate_limits.five_hour.used_percentage
 if ($null -ne $fh) {
   $bg = BgUsed ([double]$fh) 22
   $txt = " $NF_TIMER 5h: {0:N0}%" -f [double]$fh
+  $fhReset = $d.rate_limits.five_hour.resets_at
+  if ($null -ne $fhReset) {
+    try {
+      $nowUnix = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+      $remS = [long]$fhReset - $nowUnix
+      if ($remS -gt 0 -and $remS -le 18000) {
+        # Widget: quota pace — burning faster than the 5h window elapses
+        $elapsedPct = (18000 - $remS) * 100 / 18000
+        if ([double]$fh -gt ($elapsedPct + 15)) {
+          if ($bg -eq 22) { $bg = 130 }
+          $txt += [char]0x2191
+        }
+        # Widget: countdown to reset once quota is high
+        if ([double]$fh -ge 70) { $txt += " (-$([math]::Floor($remS / 60))m)" }
+      }
+    } catch {}
+  }
   $resetTime = ToHanoi $d.rate_limits.five_hour.resets_at
   if ($resetTime) { $txt += " " + [char]0x2192 + "$resetTime" }
   $txt += " "
@@ -571,7 +663,13 @@ if ($null -ne $opHint) {
 $cost = $d.cost.total_cost_usd
 if ($null -ne $cost) {
   $cstr = "{0:N2}" -f [double]$cost
-  $line2 += @{ bg = 94; fg = 15; text = " $NF_USD `$$cstr " }
+  $ctxt = " $NF_USD `$$cstr"
+  # Widget: burn rate $/h (needs >5 min of session for a stable number)
+  if ($null -ne $durMs -and [double]$durMs -gt 300000) {
+    $rate = "{0:N1}" -f ([double]$cost * 3600000 / [double]$durMs)
+    $ctxt += " (`$$rate/h)"
+  }
+  $line2 += @{ bg = 94; fg = 15; text = "$ctxt " }
 }
 
 $added   = $d.cost.total_lines_added
@@ -597,17 +695,129 @@ if ($null -ne $tok) {
   $line2 += @{ bg = 24; fg = 15; text = " $NF_HASH $human " }
 }
 
-# Turns (from transcript)
+# Turns (from transcript) + session widgets that need the transcript
 $tp = $d.transcript_path
 if ($tp -and (Test-Path $tp)) {
   $turns = (Select-String -Path $tp -Pattern '"type":"user"' -SimpleMatch | Measure-Object).Count
   if ($turns -gt 0) {
-    $line2 += @{ bg = 24; fg = 15; text = " $([char]0xF075) $turns turns " }
+    $ttxt = " $([char]0xF075) $turns turns"
+    # Widget: session velocity (turns/hour, needs >10 min)
+    if ($null -ne $durMs -and [double]$durMs -gt 600000) {
+      $ttxt += " ($([math]::Floor($turns * 3600000 / [double]$durMs))/h)"
+    }
+    $line2 += @{ bg = 24; fg = 15; text = "$ttxt " }
+
+    # Widget: auto-compact forecast — per-session context burn rate.
+    # First render stores (turns, ctx); later renders extrapolate to ~10% left.
+    $sessionId = $d.session_id
+    if ($null -ne $ctx -and $sessionId) {
+      $fcCF = "$env:TEMP\claudefy-ctx-$sessionId.txt"
+      $ctxInt = [math]::Floor([double]$ctx)
+      if (-not (Test-Path $fcCF)) {
+        Set-Content $fcCF -Value "$turns $ctxInt" -Encoding UTF8
+      } else {
+        try {
+          $fcParts = (Get-Content $fcCF -Raw).Trim() -split '\s+'
+          $fcDt = $turns - [int]$fcParts[0]
+          $fcDc = [int]$fcParts[1] - $ctxInt
+          if ($fcDt -ge 3 -and $fcDc -gt 0 -and $ctxInt -le 60) {
+            $fcLeft = [math]::Floor(($ctxInt - 10) * $fcDt / $fcDc)
+            if ($fcLeft -ge 0 -and $fcLeft -le 30) {
+              $fb = if ($fcLeft -le 5) { 88 } else { 130 }
+              $line2 += @{ bg = $fb; fg = 15; text = " $([char]0x231B) ~$fcLeft turns$([char]0x2192)compact " }
+            }
+          }
+        } catch {}
+      }
+    }
   }
+
+  # Widget: session phase — exploring vs building, from recent tool calls
+  try {
+    $recent = (Get-Content $tp -Tail 300 -ErrorAction SilentlyContinue) -join ' '
+    $buildN   = ([regex]::Matches($recent, '"name":"(Edit|Write|NotebookEdit)"')).Count
+    $exploreN = ([regex]::Matches($recent, '"name":"(Read|Grep|Glob)"')).Count
+    if (($buildN + $exploreN) -ge 5) {
+      if ($buildN -ge $exploreN) { $line2 += @{ bg = 22; fg = 15; text = " $NF_PEN build " } }
+      else                       { $line2 += @{ bg = 24; fg = 15; text = " $NF_SEARCH explore " } }
+    }
+  } catch {}
+
+  # Widget: compact count — how many times this session lost its memory
+  $cpt = (Select-String -Path $tp -Pattern 'compact_boundary' -SimpleMatch | Measure-Object).Count
+  if ($cpt -gt 0) { $line2 += @{ bg = 58; fg = 15; text = " $([char]0x267B) ${cpt}x " } }
+
+  # Widget: idle time since the transcript was last written
+  try {
+    $idleS = ((Get-Date).ToUniversalTime() - (Get-Item $tp).LastWriteTimeUtc).TotalSeconds
+    if ($idleS -ge 600) { $line2 += @{ bg = 240; fg = 15; text = " $NF_MOON idle $([math]::Floor($idleS/60))m " } }
+  } catch {}
 }
 
 # === LINE 3: Project DNA (DevRadar — cached by git HEAD, TTL 10min) ======
 $line3 = @()
+
+# --- Git health widgets: uncommitted pile, branch age, conflict radar ------
+if ($branch) {
+  # Widget: big uncommitted pile — AI writes fast, commit before you drown
+  if ($dirty -gt 0) {
+    $ucl = 0
+    $nums = @(& git -C $cwd diff --numstat 2>$null) + @(& git -C $cwd diff --cached --numstat 2>$null)
+    foreach ($ln in $nums) {
+      $pp = "$ln" -split '\s+'
+      if ($pp.Count -ge 2) {
+        $x = 0; $y = 0
+        [void][int]::TryParse($pp[0], [ref]$x)
+        [void][int]::TryParse($pp[1], [ref]$y)
+        $ucl += $x + $y
+      }
+    }
+    if ($ucl -ge 300) {
+      $ub = if ($ucl -ge 800) { 88 } else { 130 }
+      $line3 += @{ bg = $ub; fg = 15; text = " $([char]0x26A0) $ucl uncommitted " }
+    }
+  }
+
+  # Branch age vs main + conflict radar (cached 5 min per cwd|branch)
+  $mainRef = $null
+  if ($branch -ne 'main' -and $branch -ne 'master') {
+    & git -C $cwd show-ref --verify --quiet refs/heads/main 2>$null
+    if ($LASTEXITCODE -eq 0) { $mainRef = 'main' }
+    else {
+      & git -C $cwd show-ref --verify --quiet refs/heads/master 2>$null
+      if ($LASTEXITCODE -eq 0) { $mainRef = 'master' }
+    }
+  }
+  if ($mainRef) {
+    $ghCK = ($cwd + '|' + $branch) -replace '[\\/:*?"<>|]','_'
+    $ghCF = "$env:TEMP\claudefy-githealth-$ghCK.txt"
+    $ghRefresh = $true
+    if (Test-Path $ghCF) {
+      $ghAge = (Get-Date).ToUniversalTime() - (Get-Item $ghCF).LastWriteTimeUtc
+      if ($ghAge.TotalSeconds -lt 300) { $ghRefresh = $false }
+    }
+    if ($ghRefresh) {
+      $bAge = 0; $bBehind = 0; $bConf = 0
+      $base = & git -C $cwd merge-base HEAD $mainRef 2>$null
+      if ($base) {
+        $baseTs = & git -C $cwd show -s --format=%ct $base 2>$null
+        if ($baseTs) { $bAge = [math]::Floor(([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$baseTs) / 86400) }
+        $bBehind = [int](& git -C $cwd rev-list --count "HEAD..$mainRef" 2>$null)
+        # Conflict radar: merge-tree exits 1 iff the merge would conflict (git >= 2.38)
+        & git -C $cwd merge-tree --write-tree HEAD $mainRef 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 1) { $bConf = 1 }
+      }
+      Set-Content $ghCF -Value "$bAge $bBehind $bConf" -Encoding UTF8
+    }
+    try {
+      $ghp = (Get-Content $ghCF -Raw).Trim() -split '\s+'
+      if ([int]$ghp[0] -ge 3 -or [int]$ghp[1] -ge 10) {
+        $line3 += @{ bg = 64; fg = 15; text = " $NF_GIT $($ghp[0])d $([char]0x2193)$($ghp[1]) " }
+      }
+      if ($ghp[2] -eq '1') { $line3 += @{ bg = 88; fg = 15; text = " $NF_BOMB merge conflicts " } }
+    } catch {}
+  }
+}
 if ($cwd -and (Test-Path $cwd) -and (Get-Command devradar -ErrorAction SilentlyContinue)) {
   $headSha = & git -C $cwd rev-parse HEAD 2>$null
   $cacheKeyRaw = if ($headSha) { "$cwd|$headSha" } else { $cwd }
@@ -650,8 +860,63 @@ if ($cwd -and (Test-Path $cwd) -and (Get-Command devradar -ErrorAction SilentlyC
   }
 }
 
-# === LINE 4: Branding ======================================================
+# === LINE 4: Branding + daily widgets ======================================
 $line4 = @()
+
+$projDir = Join-Path $env:USERPROFILE '.claude\projects'
+if (Test-Path $projDir) {
+  # Widget: total output tokens across ALL sessions today (cached 5 min).
+  # (Transcripts no longer carry per-message cost, so tokens are the honest sum.)
+  $ctCF = "$env:TEMP\claudefy-tokens-today.txt"
+  $ctRefresh = $true
+  if (Test-Path $ctCF) {
+    $ctAge = (Get-Date).ToUniversalTime() - (Get-Item $ctCF).LastWriteTimeUtc
+    if ($ctAge.TotalSeconds -lt 300) { $ctRefresh = $false }
+  }
+  if ($ctRefresh) {
+    $ctNew = 0L
+    $midnight = (Get-Date).Date
+    Get-ChildItem $projDir -Recurse -Filter '*.jsonl' -ErrorAction SilentlyContinue |
+      Where-Object { $_.LastWriteTime -ge $midnight } | ForEach-Object {
+        Select-String -Path $_.FullName -Pattern '"output_tokens":(\d+)' -AllMatches -ErrorAction SilentlyContinue |
+          ForEach-Object { $_.Matches } | ForEach-Object { $ctNew += [long]$_.Groups[1].Value }
+      }
+    Set-Content $ctCF -Value $ctNew -Encoding UTF8
+  }
+  $ctSum = 0L
+  try { $ctSum = [long](Get-Content $ctCF -Raw).Trim() } catch {}
+  if ($ctSum -gt 0) {
+    $ctHuman = if ($ctSum -ge 1e6) { "{0:N1}M" -f ($ctSum/1e6) }
+               elseif ($ctSum -ge 1e3) { "{0:N1}k" -f ($ctSum/1e3) }
+               else { "$ctSum" }
+    $line4 += @{ bg = 94; fg = 15; text = " $([char]0x03A3) $ctHuman out today " }
+  }
+
+  # Widget: usage streak — consecutive days with Claude Code activity (cached 1h)
+  $stCF = "$env:TEMP\claudefy-streak.txt"
+  $stRefresh = $true
+  if (Test-Path $stCF) {
+    $stAge = (Get-Date).ToUniversalTime() - (Get-Item $stCF).LastWriteTimeUtc
+    if ($stAge.TotalSeconds -lt 3600) { $stRefresh = $false }
+  }
+  if ($stRefresh) {
+    $stDates = Get-ChildItem $projDir -Recurse -Filter '*.jsonl' -ErrorAction SilentlyContinue |
+      Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-40) } |
+      ForEach-Object { $_.LastWriteTime.ToString('yyyy-MM-dd') } | Sort-Object -Unique
+    $stNew = 0; $stI = 0
+    while ($stI -lt 40) {
+      $dd = (Get-Date).AddDays(-$stI).ToString('yyyy-MM-dd')
+      if ($stDates -contains $dd) { $stNew++; $stI++ }
+      elseif ($stI -eq 0) { $stI = 1 }   # today may have no finished write yet
+      else { break }
+    }
+    Set-Content $stCF -Value $stNew -Encoding UTF8
+  }
+  $streak = 0
+  try { $streak = [int](Get-Content $stCF -Raw).Trim() } catch {}
+  if ($streak -ge 2) { $line4 += @{ bg = 58; fg = 15; text = " $NF_TROPHY ${streak}d streak " } }
+}
+
 $line4 += @{ bg = 237; fg = 75; text = " Claudefy v$CLAUDEFY_VER " }
 $line4 += @{ bg = 237; fg = 208; text = " Author: HoangAnhDev " }
 
