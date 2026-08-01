@@ -1227,9 +1227,7 @@ $elapsed = ((Get-Date) - $script:START_TIME).TotalSeconds
 $elapsed = [math]::Round($elapsed, 1)
 
 Write-Host ""
-Write-Host "  $([char]0x2501)" -NoNewline -ForegroundColor DarkCyan
-Write-Host "$([char]0x2501)" * 44 -NoNewline -ForegroundColor DarkCyan
-Write-Host "" -ForegroundColor DarkCyan
+Write-Host ("  " + [string][char]0x2501 * 45) -ForegroundColor DarkCyan
 Write-Host ""
 Write-Host "  $([char]0x2705) " -NoNewline
 Write-Host "All $script:TOTAL_STEPS steps completed" -NoNewline -ForegroundColor Green
