@@ -8,7 +8,7 @@ Phiên bản bash của Claudefy. Chạy trên macOS từ Big Sur trở lên (đ
 |---|---|
 | claudefy.sh | Menu chính với ba mục Install, Reset, About |
 | install-claudefy.sh | Trình cài đặt all-in-one, có thể chạy độc lập không qua menu |
-| lib/statusline-command.sh | Script render thanh statusLine (2 hoặc 3 dòng), copy vào ~/.claude. Dòng 3 (tổng dòng code + framework + tỉ lệ code) chỉ hiện nếu có DevRadar (`npm install -g devradar`) |
+| lib/statusline-command.sh | Script render thanh statusLine (2 hoặc 3 dòng), copy vào ~/.claude. Dòng 3 (tổng dòng code + framework + tỉ lệ code) chỉ hiện nếu có DevRadar (`npm install -g @hasoftware/devradar`) |
 | lib/notify-stop.sh | Hook Stop, phát chuông và toast notification qua osascript |
 | lib/set-title.sh | Hook SessionStart, đặt tên tab terminal theo project |
 

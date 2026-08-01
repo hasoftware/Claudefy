@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.3] - 2026-08-01
+
+### Fixed
+- DevRadar step always failed with "npm failed": installers ran
+  `npm install -g devradar` but the package is published as
+  `@hasoftware/devradar`. Fixed in all three installers and docs.
+
 ## [1.3.2] - 2026-07-31
 
 ### Fixed

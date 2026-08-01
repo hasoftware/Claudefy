@@ -263,7 +263,7 @@ else
   printf '\n  %s?%s DevRadar powers Line 3 (LOC, frameworks). Install globally?\n' "$C_CYAN" "$C_RESET"
   if confirm "   "; then
     start_spin "Installing DevRadar..."
-    if npm install -g devradar >/dev/null 2>&1; then
+    if npm install -g @hasoftware/devradar >/dev/null 2>&1; then
       stop_spin "DevRadar — installed"
     else
       stop_spin "DevRadar — npm failed" 0

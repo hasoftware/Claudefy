@@ -40,7 +40,7 @@
     Don't register MCP servers.
 
 .PARAMETER SkipDevRadar
-    Don't prompt to install DevRadar (Line 3 LOC widget will stay disabled until installed manually with `npm install -g devradar`).
+    Don't prompt to install DevRadar (Line 3 LOC widget will stay disabled until installed manually with `npm install -g @hasoftware/devradar`).
 
 .EXAMPLE
     .\Install-Claudefy.ps1
@@ -942,7 +942,7 @@ if ($SkipDevRadar) {
         Write-Host "DevRadar powers Line 3 (LOC, frameworks). Install globally?" -ForegroundColor White
         if (Confirm-Action "   ") {
             Start-Spin "Installing DevRadar..."
-            & npm install -g devradar 2>&1 | Out-Null
+            & npm install -g @hasoftware/devradar 2>&1 | Out-Null
             if ($LASTEXITCODE -eq 0) {
                 Stop-Spin "DevRadar — installed"
             } else {

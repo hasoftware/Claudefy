@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Claudefy statusLine - Linux/bash port
 # Outputs a 2- or 3-line Powerline statusLine. Reads JSON from stdin via jq.
-# Line 3 (total LOC) only renders if DevRadar is installed (npm install -g devradar).
+# Line 3 (total LOC) only renders if DevRadar is installed (npm install -g @hasoftware/devradar).
 #
 # Author     : Hoang Anh Dev
 # Admin      : HASOFTWARE
