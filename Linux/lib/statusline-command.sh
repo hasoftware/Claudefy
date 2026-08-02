@@ -150,6 +150,24 @@ file_age() {
   echo $(( $(date -u +%s) - m ))
 }
 
+# Raw mtime — for cache keys, where file_age would change every second
+file_mtime() { stat -c %Y "$1" 2>/dev/null; }
+
+# git's own thresholds for %cr (90s / 90min / 36h / 14d / 8w / 12mo), so a
+# locally formatted age reads exactly as git would have written it
+rel_age() {
+  local a=$1
+  [ "$a" -lt 0 ] 2>/dev/null && a=0
+  if   [ "$a" -lt 90 ];       then echo "${a}s"
+  elif [ "$a" -lt 5400 ];     then echo "$(( (a + 30) / 60 ))m"
+  elif [ "$a" -lt 129600 ];   then echo "$(( (a + 1800) / 3600 ))h"
+  elif [ "$a" -lt 1209600 ];  then echo "$(( (a + 43200) / 86400 ))d"
+  elif [ "$a" -lt 4838400 ];  then echo "$(( (a + 302400) / 604800 ))w"
+  elif [ "$a" -lt 31556952 ]; then echo "$(( (a + 1314873) / 2629746 ))mo"
+  else echo "$(( (a + 15778476) / 31556952 ))y"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # Segment collector
 # ---------------------------------------------------------------------------
@@ -265,19 +283,41 @@ add_l1() { L1_BG+=("$1"); L1_FG+=("$2"); L1_TEXT+=("$3"); }
 # Folder
 add_l1 24 15 " $NF_FOLDER $dir "
 
-# Git + stash/commit/PR
+# Git + stash/commit/PR.
+# A render used to spawn six git processes: symbolic-ref, rev-parse, status,
+# rev-list, stash list and log. `status --porcelain=v2 --branch` answers the
+# first four in one pass, and the last two only move when HEAD or the stash log
+# does, so they hang off a cache keyed on the HEAD commit. Steady state: one
+# git process per render. The values are read through a here-doc rather than
+# eval — branch names may legally contain ';' and '$'.
 branch=""
+head_oid=""
 if [ -n "$cwd" ] && [ -d "$cwd" ]; then
-  branch=$(git -C "$cwd" symbolic-ref --short HEAD 2>/dev/null)
-  [ -z "$branch" ] && branch=$(git -C "$cwd" rev-parse --short HEAD 2>/dev/null)
-  if [ -n "$branch" ]; then
-    dirty=$(git -C "$cwd" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
-    ahead=0; behind=0
-    rev=$(git -C "$cwd" rev-list --left-right --count "HEAD...@{upstream}" 2>/dev/null)
-    if [ -n "$rev" ]; then
-      ahead=$(echo "$rev" | awk '{print $1}')
-      behind=$(echo "$rev" | awk '{print $2}')
+  dirty=0; ahead=0; behind=0; head_name=""
+  gst=$(git -C "$cwd" status --porcelain=v2 --branch 2>/dev/null)
+  if [ -n "$gst" ]; then
+    gvals=$(printf '%s\n' "$gst" | awk '
+      /^# branch\.oid /  { oid  = $3 }
+      /^# branch\.head / { hd   = $3 }
+      /^# branch\.ab /   { a = $3; b = $4 }
+      !/^#/              { d++ }
+      END {
+        gsub(/^\+/, "", a); gsub(/^-/, "", b)
+        print (oid == "" ? "-" : oid)
+        print (hd  == "" ? "-" : hd)
+        print a + 0; print b + 0; print d + 0
+      }')
+    { read -r head_oid; read -r head_name; read -r ahead; read -r behind; read -r dirty; } <<EOF
+$gvals
+EOF
+    [ "$head_oid" = "-" ] && head_oid=""
+    if [ -n "$head_name" ] && [ "$head_name" != "-" ] && [ "$head_name" != "(detached)" ]; then
+      branch=$head_name
+    elif [ -n "$head_oid" ] && [ "$head_oid" != "(initial)" ]; then
+      branch=$(printf '%s' "$head_oid" | cut -c1-7)
     fi
+  fi
+  if [ -n "$branch" ]; then
     gtxt="$NF_GIT $branch"
     if [ "$dirty" -gt 0 ] 2>/dev/null; then
       gtxt+=" $DOT_FULL$dirty"
@@ -295,22 +335,38 @@ if [ -n "$cwd" ] && [ -d "$cwd" ]; then
     esac
     add_l1 "$gbg" 15 " $gtxt "
 
-    # Stash
-    stash_count=$(git -C "$cwd" stash list 2>/dev/null | wc -l | tr -d ' ')
+    # Stash count and commit time only move when HEAD or the stash log moves.
+    # Key on both and these two spawns vanish on every unchanged render. The
+    # commit is kept as a unix timestamp rather than git's relative wording, so
+    # the label still ticks between refreshes and no longer depends on git
+    # printing English.
+    gkey="$head_oid"
+    stash_log="$cwd/.git/logs/refs/stash"
+    if [ -f "$stash_log" ]; then
+      gkey="$gkey-$(file_mtime "$stash_log")"
+    fi
+    gc_ck=$(echo "$cwd" | tr '/\\:*?"<>|' '_')
+    gc_cf="/tmp/claudefy-git-$gc_ck.txt"
+    stash_count=0; commit_unix=0; gc_hit=0
+    if [ -f "$gc_cf" ]; then
+      read -r c_key c_stash c_ct < "$gc_cf" 2>/dev/null
+      if [ -n "$c_key" ] && [ "$c_key" = "$gkey" ]; then
+        stash_count=${c_stash:-0}; commit_unix=${c_ct:-0}; gc_hit=1
+      fi
+    fi
+    if [ "$gc_hit" != "1" ]; then
+      stash_count=$(git -C "$cwd" stash list 2>/dev/null | wc -l | tr -d ' ')
+      commit_unix=$(git -C "$cwd" log -1 --format=%ct 2>/dev/null)
+      [ -z "$commit_unix" ] && commit_unix=0
+      echo "$gkey $stash_count $commit_unix" > "$gc_cf"
+    fi
+
     if [ "$stash_count" -gt 0 ] 2>/dev/null; then
       add_l1 53 15 " $NF_STASH $stash_count "
     fi
 
-    # Last commit age
-    last_commit=$(git -C "$cwd" log -1 --format=%cr 2>/dev/null)
-    if [ -n "$last_commit" ]; then
-      short=$(echo "$last_commit" | sed -E \
-        -e 's/ ago$//' \
-        -e 's/ hours?$/h/' -e 's/ minutes?$/m/' \
-        -e 's/ days?$/d/'  -e 's/ weeks?$/w/' \
-        -e 's/ months?$/mo/' -e 's/ years?$/y/' \
-        -e 's/ seconds?$/s/')
-      add_l1 240 15 " $NF_HISTORY $short "
+    if [ "$commit_unix" -gt 0 ] 2>/dev/null; then
+      add_l1 240 15 " $NF_HISTORY $(rel_age $(( $(date -u +%s) - commit_unix ))) "
     fi
   fi
 fi
@@ -368,17 +424,23 @@ fi
 if [ "$COMPACT" != "1" ] && [ -n "$branch" ] && command -v gh >/dev/null 2>&1; then
   cache_key=$(echo "${cwd}|${branch}" | tr '/\\:*?"<>|' '_')
   cache_file="/tmp/claude-pr-cache-$cache_key.json"
+  # Freshness is tracked separately from the payload on purpose. Testing the
+  # payload alone cannot tell "cache expired" from "cache says there is no open
+  # PR" — so on any branch without a PR, the common case, this re-ran `gh pr
+  # list` on every single render, network round trip and all.
   pr=""
+  pr_fresh=0
   if [ -f "$cache_file" ]; then
     ts=$(jq -r '.timestamp // empty' "$cache_file" 2>/dev/null)
     if [ -n "$ts" ]; then
       cache_age=$(( $(date -u +%s) - $(date -u -d "$ts" +%s 2>/dev/null) ))
-      if [ "$cache_age" -lt 60 ] 2>/dev/null; then
+      if [ "$cache_age" -lt 60 ] 2>/dev/null && [ "$cache_age" -ge 0 ] 2>/dev/null; then
         pr=$(jq -c '.pr // empty' "$cache_file" 2>/dev/null)
+        pr_fresh=1
       fi
     fi
   fi
-  if [ -z "$pr" ] || [ "$pr" = "null" ]; then
+  if [ "$pr_fresh" != "1" ]; then
     pr_raw=$(gh pr list --head "$branch" --state open --json number,statusCheckRollup -L 1 2>/dev/null)
     if [ -n "$pr_raw" ]; then
       pr=$(echo "$pr_raw" | jq -c '.[0] // empty')
@@ -432,12 +494,20 @@ if [ "$COMPACT" != "1" ] && command -v docker >/dev/null 2>&1; then
   fi
 fi
 
-# Widget: dev server alive on a common port (instant probe via /dev/tcp)
+# Widget: dev server alive on a common port (probe via /dev/tcp, cached 30s).
+# A dev server doesn't come and go between two renders; 30s notices it soon
+# enough without paying for five connect attempts every time.
 if [ "$COMPACT" != "1" ]; then
-  srv_port=""
-  for p in 3000 5173 8080 4200 8000; do
-    if (echo >"/dev/tcp/127.0.0.1/$p") 2>/dev/null; then srv_port=$p; break; fi
-  done
+  sp_cf="/tmp/claudefy-devport.txt"
+  sp_age=$(file_age "$sp_cf")
+  if [ -z "$sp_age" ] || [ "$sp_age" -ge 30 ] 2>/dev/null; then
+    srv_port=""
+    for p in 3000 5173 8080 4200 8000; do
+      if (echo >"/dev/tcp/127.0.0.1/$p") 2>/dev/null; then srv_port=$p; break; fi
+    done
+    echo "$srv_port" > "$sp_cf"
+  fi
+  srv_port=$(cat "$sp_cf" 2>/dev/null)
   [ -n "$srv_port" ] && add_l1 29 15 " $NF_GLOBE :$srv_port "
 fi
 
@@ -624,9 +694,36 @@ if [ "$total_tok" -gt 0 ] 2>/dev/null; then
   add_l2 24 15 " $NF_HASH $(human_tokens $total_tok) "
 fi
 
-# Turns (from transcript) + session widgets that need the transcript
+# Turns (from transcript) + session widgets that need the transcript.
+# These scans read the whole file and were the bulk of a render. None of them
+# can change unless the transcript does, so they share one cache keyed on its
+# size and mtime. While the session sits idle — exactly when refreshInterval
+# fires — this collapses to a single stat(). COMPACT is part of the key because
+# it decides whether the extra scans run at all.
 if [ -n "$tp" ] && [ -f "$tp" ]; then
-  turns=$(grep -c '"type":"user"' "$tp" 2>/dev/null)
+  tp_key="$COMPACT-$(wc -c < "$tp" 2>/dev/null | tr -d ' ')-$(file_mtime "$tp")"
+  tx_cf="/tmp/claudefy-tx-${session_id:-nosession}.txt"
+  turns=0; build_n=0; explore_n=0; cpt=0; tx_hit=0
+  if [ -f "$tx_cf" ]; then
+    read -r k_key k_turns k_build k_explore k_cpt < "$tx_cf" 2>/dev/null
+    if [ -n "$k_key" ] && [ "$k_key" = "$tp_key" ]; then
+      turns=${k_turns:-0}; build_n=${k_build:-0}; explore_n=${k_explore:-0}; cpt=${k_cpt:-0}
+      tx_hit=1
+    fi
+  fi
+  if [ "$tx_hit" != "1" ]; then
+    turns=$(grep -c '"type":"user"' "$tp" 2>/dev/null)
+    [ -z "$turns" ] && turns=0
+    if [ "$COMPACT" != "1" ]; then
+      cpt=$(grep -c 'compact_boundary' "$tp" 2>/dev/null)
+      [ -z "$cpt" ] && cpt=0
+      recent=$(tail -c 150000 "$tp" 2>/dev/null)
+      build_n=$(printf '%s' "$recent" | grep -oE '"name":"(Edit|Write|NotebookEdit)"' | wc -l | tr -d ' ')
+      explore_n=$(printf '%s' "$recent" | grep -oE '"name":"(Read|Grep|Glob)"' | wc -l | tr -d ' ')
+    fi
+    echo "$tp_key $turns $build_n $explore_n $cpt" > "$tx_cf"
+  fi
+
   if [ "$turns" -gt 0 ] 2>/dev/null; then
     turns_txt=" $ICON_TURNS $turns turns"
     # Widget: session velocity (turns/hour, needs >10 min)
@@ -658,9 +755,6 @@ if [ -n "$tp" ] && [ -f "$tp" ]; then
 
   if [ "$COMPACT" != "1" ]; then
     # Widget: session phase — exploring vs building, from recent tool calls
-    recent=$(tail -c 150000 "$tp" 2>/dev/null)
-    build_n=$(printf '%s' "$recent" | grep -oE '"name":"(Edit|Write|NotebookEdit)"' | wc -l | tr -d ' ')
-    explore_n=$(printf '%s' "$recent" | grep -oE '"name":"(Read|Grep|Glob)"' | wc -l | tr -d ' ')
     if [ $((build_n + explore_n)) -ge 5 ] 2>/dev/null; then
       if [ "$build_n" -ge "$explore_n" ] 2>/dev/null; then
         add_l2 22 15 " $NF_PEN build "
@@ -670,7 +764,6 @@ if [ -n "$tp" ] && [ -f "$tp" ]; then
     fi
 
     # Widget: compact count — how many times this session lost its memory
-    cpt=$(grep -c 'compact_boundary' "$tp" 2>/dev/null)
     [ "$cpt" -gt 0 ] 2>/dev/null && add_l2 58 15 " $ICON_RECYCLE ${cpt}x "
 
     # Widget: idle time since the transcript was last written
@@ -731,29 +824,34 @@ if [ "$COMPACT" != "1" ] && [ -n "$branch" ]; then
 fi
 
 if [ "$COMPACT" != "1" ] && [ -n "$cwd" ] && [ -d "$cwd" ] && command -v devradar >/dev/null 2>&1; then
-  head_sha=$(git -C "$cwd" rev-parse HEAD 2>/dev/null)
-  cache_key_raw="${cwd}|${head_sha}"
+  # head_oid already came back with the porcelain status — no second rev-parse.
+  cache_key_raw="${cwd}|${head_oid}"
   dr_cache_key=$(echo "$cache_key_raw" | tr '/\\:*?"<>|' '_')
   dr_cache_file="/tmp/claude-devradar-cache-$dr_cache_key.json"
 
+  # Same split as the PR cache: an empty payload is a legitimate cached answer,
+  # not a miss. Without the flag a repo devradar can't parse re-ran a full scan
+  # on every render.
   dr_data=""
+  dr_fresh=0
   if [ -f "$dr_cache_file" ]; then
     ts=$(jq -r '.timestamp // empty' "$dr_cache_file" 2>/dev/null)
     if [ -n "$ts" ]; then
       cache_age=$(( $(date -u +%s) - $(date -u -d "$ts" +%s 2>/dev/null) ))
       if [ "$cache_age" -lt 600 ] 2>/dev/null && [ "$cache_age" -ge 0 ] 2>/dev/null; then
         dr_data=$(jq -c '.data // empty' "$dr_cache_file" 2>/dev/null)
+        dr_fresh=1
       fi
     fi
   fi
-  if [ -z "$dr_data" ] || [ "$dr_data" = "null" ]; then
+  if [ "$dr_fresh" != "1" ]; then
     dr_json=$(devradar --format json "$cwd" 2>/dev/null)
     if [ -n "$dr_json" ]; then
       dr_data=$(echo "$dr_json" | jq -c '.' 2>/dev/null)
-      if [ -n "$dr_data" ]; then
-        jq -n --argjson d "$dr_data" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{timestamp:$t, data:$d}' > "$dr_cache_file" 2>/dev/null
-      fi
     fi
+    # Stamp the cache even when the scan yielded nothing, so a failing or slow
+    # devradar is rate-limited too rather than retried every render.
+    jq -n --argjson d "${dr_data:-null}" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{timestamp:$t, data:$d}' > "$dr_cache_file" 2>/dev/null
   fi
   if [ -n "$dr_data" ] && [ "$dr_data" != "null" ]; then
     code_lines=$(echo "$dr_data" | jq -r '.summary.codeLines // 0' 2>/dev/null)

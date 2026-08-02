@@ -331,18 +331,34 @@ $model = if ($d.model.display_name) { $d.model.display_name } else { 'Claude' }
 $line1 = @()
 $line1 += @{ bg = 24; fg = 15; text = " $NF_FOLDER $dir " }
 
+# A render used to spawn six git processes: symbolic-ref, rev-parse, status,
+# rev-list, stash list and log. `status --porcelain=v2 --branch` answers the
+# first four at once, and the last two only change when HEAD or the stash log
+# does, so they hang off a cache keyed on the HEAD commit. Steady state: one
+# git process per render.
 $branch = $null
+$headOid = $null
 if ($cwd -and (Test-Path $cwd)) {
-  $branch = & git -C $cwd symbolic-ref --short HEAD 2>$null
-  if (-not $branch) { $branch = & git -C $cwd rev-parse --short HEAD 2>$null }
-  if ($branch) {
-    $dirty = (& git -C $cwd status --porcelain 2>$null | Measure-Object).Count
-    $ahead = 0; $behind = 0
-    $rev = & git -C $cwd rev-list --left-right --count "HEAD...@{upstream}" 2>$null
-    if ($rev) {
-      $rp = $rev -split '\s+'
-      if ($rp.Count -ge 2) { $ahead = [int]$rp[0]; $behind = [int]$rp[1] }
+  $dirty = 0; $ahead = 0; $behind = 0
+  $st = & git -C $cwd status --porcelain=v2 --branch 2>$null
+  if ($st) {
+    $headName = $null
+    foreach ($l in $st) {
+      if     ($l.StartsWith('# branch.oid '))  { $headOid  = $l.Substring(13).Trim() }
+      elseif ($l.StartsWith('# branch.head ')) { $headName = $l.Substring(14).Trim() }
+      elseif ($l.StartsWith('# branch.ab ')) {
+        $ab = ($l.Substring(12).Trim()) -split '\s+'
+        if ($ab.Count -ge 2) {
+          $ahead  = [int]($ab[0] -replace '^\+','')
+          $behind = [int]($ab[1] -replace '^-','')
+        }
+      }
+      elseif (-not $l.StartsWith('#')) { $dirty++ }
     }
+    if ($headName -and $headName -ne '(detached)') { $branch = $headName }
+    elseif ($headOid -and $headOid -ne '(initial)') { $branch = $headOid.Substring(0, [math]::Min(7, $headOid.Length)) }
+  }
+  if ($branch) {
     $gtxt = "$NF_GIT $branch"
     if ($dirty -gt 0) { $gtxt += " " + [char]0x25CF + "$dirty" } else { $gtxt += " " + [char]0x25CB }
     if ($ahead  -gt 0) { $gtxt += " " + [char]0x2191 + "$ahead" }
@@ -354,19 +370,48 @@ if ($cwd -and (Test-Path $cwd)) {
     if (($branch -eq 'main' -or $branch -eq 'master') -and $dirty -gt 0) { $gbg = 88 }
     $line1 += @{ bg = $gbg; fg = 15; text = " $gtxt " }
 
-    $stashCount = (& git -C $cwd stash list 2>$null | Measure-Object).Count
+    # Stash count and commit time only move when HEAD or the stash log moves.
+    # Key on both and the two spawns disappear on every unchanged render. The
+    # commit is stored as a unix timestamp rather than git's relative wording,
+    # so the label still ticks between refreshes — and no longer depends on
+    # git's output being English.
+    $gKey = "$headOid"
+    $stashLog = Join-Path $cwd '.git\logs\refs\stash'
+    try { if (Test-Path $stashLog) { $gKey += '-' + (Get-Item $stashLog).LastWriteTimeUtc.Ticks } } catch {}
+    $gcCF = "$env:TEMP\claudefy-git-$(($cwd -replace '[\\/:*?""<>|]','_')).txt"
+    $stashCount = 0; $commitUnix = 0L
+    $gcHit = $false
+    if (Test-Path $gcCF) {
+      try {
+        $gcP = (Get-Content $gcCF -Raw).Trim() -split '\s+'
+        if ($gcP.Count -ge 3 -and $gcP[0] -eq $gKey) {
+          $stashCount = [int]$gcP[1]; $commitUnix = [long]$gcP[2]; $gcHit = $true
+        }
+      } catch {}
+    }
+    if (-not $gcHit) {
+      $stashCount = (& git -C $cwd stash list 2>$null | Measure-Object).Count
+      $ct = & git -C $cwd log -1 --format=%ct 2>$null
+      if ($ct) { try { $commitUnix = [long]$ct } catch {} }
+      Set-Content $gcCF -Value "$gKey $stashCount $commitUnix" -Encoding UTF8
+    }
+
     if ($stashCount -gt 0) {
       $line1 += @{ bg = 53; fg = 15; text = " $NF_STASH $stashCount " }
     }
 
-    $lastCommit = & git -C $cwd log -1 --format=%cr 2>$null
-    if ($lastCommit) {
-      $short = $lastCommit
-      $short = $short -replace ' ago$',''
-      $short = $short -replace ' hours?$','h' -replace ' minutes?$','m'
-      $short = $short -replace ' days?$','d'  -replace ' weeks?$','w'
-      $short = $short -replace ' months?$','mo' -replace ' years?$','y'
-      $short = $short -replace ' seconds?$','s'
+    if ($commitUnix -gt 0) {
+      # Same thresholds git uses for %cr (90s / 90min / 36h / 14d / 8w / 12mo),
+      # so the label reads exactly as it did when git formatted it.
+      $age = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - $commitUnix
+      if ($age -lt 0) { $age = 0 }
+      $short = if     ($age -lt 90)       { "$([math]::Round($age))s" }
+               elseif ($age -lt 5400)     { "$([math]::Round($age / 60))m" }
+               elseif ($age -lt 129600)   { "$([math]::Round($age / 3600))h" }
+               elseif ($age -lt 1209600)  { "$([math]::Round($age / 86400))d" }
+               elseif ($age -lt 4838400)  { "$([math]::Round($age / 604800))w" }
+               elseif ($age -lt 31556952) { "$([math]::Round($age / 2629746))mo" }
+               else                       { "$([math]::Round($age / 31556952))y" }
       $line1 += @{ bg = 240; fg = 15; text = " $NF_HISTORY $short " }
     }
   }
@@ -430,15 +475,20 @@ if ($runtime) {
 if ($branch -and (Get-Command gh -ErrorAction SilentlyContinue)) {
   $cacheKey = ($cwd + '|' + $branch) -replace '[\\/:*?"<>|]','_'
   $cacheFile = "$env:TEMP\claude-pr-cache-$cacheKey.json"
+  # Freshness is tracked separately from the payload on purpose. Testing the
+  # payload alone cannot tell "cache expired" from "cache says there is no open
+  # PR" — so on any branch without a PR, the common case, this re-ran `gh pr
+  # list` on every single render, network round trip and all.
   $pr = $null
+  $prFresh = $false
   if (Test-Path $cacheFile) {
     try {
       $cache = Get-Content $cacheFile -Raw | ConvertFrom-Json
       $age = (Get-Date).ToUniversalTime() - ([datetime]$cache.timestamp).ToUniversalTime()
-      if ($age.TotalSeconds -lt 60) { $pr = $cache.pr }
+      if ($age.TotalSeconds -lt 60 -and $age.TotalSeconds -ge 0) { $pr = $cache.pr; $prFresh = $true }
     } catch {}
   }
-  if (-not $pr) {
+  if (-not $prFresh) {
     try {
       $prJsonRaw = & gh pr list --head $branch --state open --json number,statusCheckRollup,reviewDecision -L 1 2>$null
       if ($prJsonRaw) {
@@ -511,17 +561,31 @@ if (Get-Command docker -ErrorAction SilentlyContinue) {
   if ($dkN -gt 0) { $line1 += @{ bg = 25; fg = 15; text = " $NF_DOCKER $dkN " } }
 }
 
-# Widget: dev server alive on a common port (quick TCP probe)
-$srvPort = $null
-foreach ($p in 3000, 5173, 8080, 4200, 8000) {
-  $tc = New-Object System.Net.Sockets.TcpClient
-  try {
-    $iar = $tc.BeginConnect('127.0.0.1', $p, $null, $null)
-    if ($iar.AsyncWaitHandle.WaitOne(120) -and $tc.Connected) { $srvPort = $p }
-  } catch {}
-  $tc.Close()
-  if ($srvPort) { break }
+# Widget: dev server alive on a common port (TCP probe, cached 30s).
+# With every port closed this waits out 120ms x 5 ports, so probing on every
+# render spent up to 600ms discovering nothing. A dev server doesn't come and
+# go between two renders; 30s is soon enough to notice one.
+$spCF = "$env:TEMP\claudefy-devport.txt"
+$spRefresh = $true
+if (Test-Path $spCF) {
+  $spAge = (Get-Date).ToUniversalTime() - (Get-Item $spCF).LastWriteTimeUtc
+  if ($spAge.TotalSeconds -lt 30) { $spRefresh = $false }
 }
+if ($spRefresh) {
+  $srvPort = ''
+  foreach ($p in 3000, 5173, 8080, 4200, 8000) {
+    $tc = New-Object System.Net.Sockets.TcpClient
+    try {
+      $iar = $tc.BeginConnect('127.0.0.1', $p, $null, $null)
+      if ($iar.AsyncWaitHandle.WaitOne(120) -and $tc.Connected) { $srvPort = "$p" }
+    } catch {}
+    $tc.Close()
+    if ($srvPort) { break }
+  }
+  Set-Content $spCF -Value $srvPort -Encoding UTF8
+}
+$srvPort = ''
+try { $srvPort = ((Get-Content $spCF -Raw).Trim()) } catch {}
 if ($srvPort) { $line1 += @{ bg = 29; fg = 15; text = " $NF_GLOBE :$srvPort " } }
 
 # Widget: permission mode — safety cue
@@ -697,10 +761,39 @@ if ($null -ne $tok) {
   $line2 += @{ bg = 24; fg = 15; text = " $NF_HASH $human " }
 }
 
-# Turns (from transcript) + session widgets that need the transcript
+# Turns (from transcript) + session widgets that need the transcript.
+# The three scans these need (turns, phase, compact count) read the whole file
+# and were the bulk of a render: ~264ms of ~425ms measured. None of them can
+# change unless the transcript does, so they share one cache keyed on its size
+# and mtime. While the session sits idle — which is exactly when
+# refreshInterval fires — this collapses to a single stat().
 $tp = $d.transcript_path
 if ($tp -and (Test-Path $tp)) {
-  $turns = (Select-String -Path $tp -Pattern '"type":"user"' -SimpleMatch | Measure-Object).Count
+  $tpItem = Get-Item $tp
+  $tpKey  = "$($tpItem.Length)-$($tpItem.LastWriteTimeUtc.Ticks)"
+  $txCF   = "$env:TEMP\claudefy-tx-$($d.session_id).txt"
+  $turns = 0; $buildN = 0; $exploreN = 0; $cpt = 0
+  $txHit = $false
+  if (Test-Path $txCF) {
+    try {
+      $txP = (Get-Content $txCF -Raw).Trim() -split '\s+'
+      if ($txP.Count -ge 5 -and $txP[0] -eq $tpKey) {
+        $turns = [int]$txP[1]; $buildN = [int]$txP[2]; $exploreN = [int]$txP[3]; $cpt = [int]$txP[4]
+        $txHit = $true
+      }
+    } catch {}
+  }
+  if (-not $txHit) {
+    $turns = (Select-String -Path $tp -Pattern '"type":"user"' -SimpleMatch | Measure-Object).Count
+    $cpt   = (Select-String -Path $tp -Pattern 'compact_boundary' -SimpleMatch | Measure-Object).Count
+    try {
+      $recent   = (Get-Content $tp -Tail 300 -ErrorAction SilentlyContinue) -join ' '
+      $buildN   = ([regex]::Matches($recent, '"name":"(Edit|Write|NotebookEdit)"')).Count
+      $exploreN = ([regex]::Matches($recent, '"name":"(Read|Grep|Glob)"')).Count
+    } catch {}
+    Set-Content $txCF -Value "$tpKey $turns $buildN $exploreN $cpt" -Encoding UTF8
+  }
+
   if ($turns -gt 0) {
     $ttxt = " $([char]0xF075) $turns turns"
     # Widget: session velocity (turns/hour, needs >10 min)
@@ -735,18 +828,12 @@ if ($tp -and (Test-Path $tp)) {
   }
 
   # Widget: session phase — exploring vs building, from recent tool calls
-  try {
-    $recent = (Get-Content $tp -Tail 300 -ErrorAction SilentlyContinue) -join ' '
-    $buildN   = ([regex]::Matches($recent, '"name":"(Edit|Write|NotebookEdit)"')).Count
-    $exploreN = ([regex]::Matches($recent, '"name":"(Read|Grep|Glob)"')).Count
-    if (($buildN + $exploreN) -ge 5) {
-      if ($buildN -ge $exploreN) { $line2 += @{ bg = 22; fg = 15; text = " $NF_PEN build " } }
-      else                       { $line2 += @{ bg = 24; fg = 15; text = " $NF_SEARCH explore " } }
-    }
-  } catch {}
+  if (($buildN + $exploreN) -ge 5) {
+    if ($buildN -ge $exploreN) { $line2 += @{ bg = 22; fg = 15; text = " $NF_PEN build " } }
+    else                       { $line2 += @{ bg = 24; fg = 15; text = " $NF_SEARCH explore " } }
+  }
 
   # Widget: compact count — how many times this session lost its memory
-  $cpt = (Select-String -Path $tp -Pattern 'compact_boundary' -SimpleMatch | Measure-Object).Count
   if ($cpt -gt 0) { $line2 += @{ bg = 58; fg = 15; text = " $([char]0x267B) ${cpt}x " } }
 
   # Widget: idle time since the transcript was last written
@@ -825,21 +912,27 @@ if ($cwd -and (Test-Path $cwd) -and (Get-Command devradar -ErrorAction SilentlyC
   $cacheKeyRaw = if ($headSha) { "$cwd|$headSha" } else { $cwd }
   $cacheKey = $cacheKeyRaw -replace '[\\/:*?"<>|]','_'
   $cacheFile = "$env:TEMP\claude-devradar-cache-$cacheKey.json"
+  # Same split as the PR cache: an empty payload is a legitimate cached answer,
+  # not a miss. Without the flag a repo devradar can't parse re-ran a full scan
+  # on every render.
   $devradar = $null
+  $drFresh = $false
   if (Test-Path $cacheFile) {
     try {
       $cache = Get-Content $cacheFile -Raw | ConvertFrom-Json
       $age = (Get-Date).ToUniversalTime() - ([datetime]$cache.timestamp).ToUniversalTime()
-      if ($age.TotalSeconds -lt 600) { $devradar = $cache.data }
+      if ($age.TotalSeconds -lt 600 -and $age.TotalSeconds -ge 0) { $devradar = $cache.data; $drFresh = $true }
     } catch {}
   }
-  if (-not $devradar) {
+  if (-not $drFresh) {
     try {
       $json = & devradar --format json "$cwd" 2>$null
-      if ($json) {
-        $devradar = $json | ConvertFrom-Json
-        @{ timestamp = (Get-Date).ToUniversalTime().ToString('o'); data = $devradar } | ConvertTo-Json -Depth 10 | Set-Content $cacheFile -Encoding UTF8
-      }
+      if ($json) { $devradar = $json | ConvertFrom-Json }
+    } catch {}
+    # Stamp the cache even when the scan yielded nothing, so a failing or slow
+    # devradar is rate-limited too rather than retried every render.
+    try {
+      @{ timestamp = (Get-Date).ToUniversalTime().ToString('o'); data = $devradar } | ConvertTo-Json -Depth 10 | Set-Content $cacheFile -Encoding UTF8
     } catch {}
   }
   if ($devradar -and $devradar.summary.codeLines) {
@@ -1140,14 +1233,31 @@ if (Test-Path $settingsPath) {
     } catch { }
 }
 
-# statusLine — replace. refreshInterval keeps the CPU/RAM widget ticking while
-# the session is idle; without it the statusLine is purely event-driven and the
-# load numbers freeze exactly when you're sitting there watching them.
+# statusLine — replace.
+#
+# Deliberately no `refreshInterval`. Claude Code runs this command through Git
+# Bash, so every render costs three processes: bash -> pwsh -> conhost. A timer
+# pays that toll forever, in every open session at once: measured on a machine
+# with six sessions, a 10s interval produced ~156 processes a minute purely to
+# redraw a status bar that nobody was looking at. Event-driven renders already
+# fire every couple of seconds while you work, which is when the numbers matter
+# — they only go stale once you walk away.
+#
+# To trade that back for a live clock/load readout, add "refreshInterval": <s>
+# here yourself, and keep in mind the cost multiplies by concurrent sessions.
+$prevRefresh = $null
+try {
+    if ($settings.Contains('statusLine') -and $settings['statusLine']) {
+        $prevRefresh = $settings['statusLine']['refreshInterval']
+    }
+} catch {}
 $settings['statusLine'] = [ordered]@{
-    type            = 'command'
-    command         = "pwsh -NoProfile -File `"$slPath`""
-    refreshInterval = 10
+    type    = 'command'
+    command = "pwsh -NoProfile -File `"$slPath`""
 }
+# Carried over rather than clobbered — opting in shouldn't be undone by the
+# next re-run of the installer.
+if ($prevRefresh) { $settings['statusLine']['refreshInterval'] = $prevRefresh }
 
 # hooks — set ours (SessionStart + Stop), preserve other event hooks
 if (-not $settings.Contains('hooks')) { $settings['hooks'] = [ordered]@{} }

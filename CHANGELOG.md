@@ -7,32 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.5.1] - 2026-08-02
 
+A release about cost. Adding the load widget in 1.5.0 prompted the obvious
+question — what does the status line itself cost? — and profiling turned up a
+long-standing bug plus several widgets doing far more work than they needed to.
+Measured on Windows, a render went from 1375ms/412ms (wall/CPU) to 489ms/131ms.
+
 ### Fixed
-- CPU/RAM froze while the session sat idle. Claude Code's statusLine is
-  event-driven, so with nothing happening the command simply stops being
-  invoked — measured here as 9s and 22s gaps between renders. Installers now
-  set `statusLine.refreshInterval: 10`, which re-runs the command on a timer.
-- On Linux/macOS the render cache (TTL 10s) returned early before the CPU/RAM
-  code ran, and its key didn't include those values, so a load change alone
-  was masked by a cache hit. The block now runs *before* the cache check and
-  both values are part of the key.
+- **`gh pr list` ran on every single render** on any branch without an open PR,
+  network round trip and all. The cache stored the result but freshness was
+  inferred from the payload, so "cached: there is no PR" was indistinguishable
+  from "cache expired". Freshness is now tracked separately. Observed on a
+  machine with six concurrent sessions: 16 `gh` processes per 45s -> 2 per 60s.
+- The DevRadar cache had the same flaw, and additionally never stamped the
+  cache when a scan produced nothing, so an unparseable repo re-scanned forever.
+- On Linux/macOS the render cache returned early before the CPU/RAM code ran,
+  and its key didn't include those values, so a load change alone was masked by
+  a cache hit. That block now runs *before* the cache check and both values are
+  part of the key.
 
 ### Changed
-- CPU/RAM sample TTL 30s -> 8s. Deliberately below the 10s `refreshInterval`:
-  the cache file is stamped partway through a run, so at the next tick its age
-  reads just under 10s — an equal TTL would hit the cache every time and the
-  numbers would never move.
+- **No `refreshInterval` by default.** 1.5.1 briefly shipped `10`; measurement
+  retired the idea. Claude Code runs the status line through Git Bash, so each
+  render costs three processes (bash -> pwsh -> conhost), and a timer pays that
+  toll forever in every open session at once — six sessions produced ~156
+  processes a minute to redraw a bar nobody was looking at. Event-driven renders
+  already fire every few seconds while you work, which is when the numbers
+  matter. Add `"refreshInterval": <seconds>` to `statusLine` yourself if you
+  want a live readout while idle; re-running the installer now preserves it.
+- Commit age is formatted locally from `%ct` instead of parsing `%cr`, using
+  git's own thresholds (90s / 90min / 36h / 14d / 8w / 12mo) so the label is
+  unchanged — and it no longer breaks when git isn't printing English.
 
 ### Performance
-- Windows CPU/RAM now reads raw perf counters and diffs them between renders,
-  the same approach `/proc/stat` gives us on Linux. `Win32_Processor`'s
-  `LoadPercentage` samples internally for a full second (measured ~1050ms) and
-  `Win32_OperatingSystem` cost ~157ms, which made this widget the single most
-  expensive thing on the status line — a poor trade for something whose job is
-  to tell you the machine is busy. `Win32_PerfRawData_PerfOS_Processor` and
-  `Win32_PerfRawData_PerfOS_Memory` answer in ~6ms and ~7ms. Total physical RAM
-  is carried in the cache file rather than re-queried. Cold-cache render:
-  2882ms -> 1615ms wall, 1094ms -> 328ms CPU.
+- Transcript widgets (turns, session phase, compact count) share one cache keyed
+  on the transcript's size and mtime. They read the whole file and accounted for
+  ~264ms of a ~425ms render; they cannot change unless the transcript does.
+- Git dropped from six processes per render to one. `status --porcelain=v2
+  --branch` yields branch, ahead/behind and dirty count together, and stash
+  count plus commit time hang off a cache keyed on the HEAD commit. Line 3 reuses
+  that same commit id instead of calling `rev-parse` again.
+- Dev-server port probe cached 30s. With every port closed it waited out
+  120ms x 5 ports, spending up to 600ms per render to discover nothing.
+- Windows CPU/RAM reads raw perf counters and diffs them between renders, the
+  approach `/proc/stat` already gives us on Linux. `Win32_Processor`'s
+  `LoadPercentage` samples internally for a full second (~1050ms) and
+  `Win32_OperatingSystem` cost ~157ms, making the load widget the most expensive
+  thing on the line — a poor trade for something whose job is to report that the
+  machine is busy. The raw counters answer in ~6ms and ~7ms.
 - Those counters exceed 2^53, so they are handled as `[long]`; `[double]` was
   rounding them and serialising the timestamp as `1.34E+17`.
 
