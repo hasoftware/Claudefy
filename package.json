@@ -1,6 +1,6 @@
 {
   "name": "@hasoftware/claudefy",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "description": "Make Claude Code yours — cross-platform statusline, smart notifications, themes & more.",
   "bin": {
     "claudefy": "bin/cli.js"
@@ -28,9 +28,9 @@
     "customization",
     "powerline"
   ],
-  "author": "Hoang Anh Dev <hacklike17.ai@gmail.com> (https://github.com/hasoftware)",
+  "author": "Hoang Anh Dev (https://github.com/hasoftware)",
   "contributors": [
-    "Hoang Anh Dev <hacklike17.ai@gmail.com> (https://github.com/hasoftware)"
+    "Hoang Anh Dev (https://github.com/hasoftware)"
   ],
   "license": "MIT",
   "repository": {

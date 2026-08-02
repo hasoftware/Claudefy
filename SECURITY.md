@@ -26,7 +26,7 @@ There are **no install scripts** (`preinstall`, `postinstall`, `install`) in `pa
 
 ## Reporting a Vulnerability
 
-If you discover a security issue, please email hacklike17.ai@gmail.com with details. Do not open a public issue for security vulnerabilities.
+If you discover a security issue, please open a private security advisory on GitHub (https://github.com/hasoftware/Claudefy/security/advisories/new). Do not open a public issue for security vulnerabilities.
 
 ## Supported Versions
 
