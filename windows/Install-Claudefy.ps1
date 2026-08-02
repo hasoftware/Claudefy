@@ -933,26 +933,62 @@ if (Test-Path $sysCF) {
   if ($sysAge.TotalSeconds -lt 8) { $sysRefresh = $false }
 }
 if ($sysRefresh) {
-  $sysLine = ''
+  # Raw perf counters + a delta between renders, the same trick /proc/stat gives
+  # us on Linux. Win32_Processor's LoadPercentage samples internally for a full
+  # second (measured: ~1050ms) and Win32_OperatingSystem costs ~157ms, which
+  # made this widget by far the most expensive thing on the line. The raw
+  # counters answer in ~6ms and ~7ms. Total physical RAM never changes, so it
+  # is carried in the cache file instead of being re-queried.
+  # These counters run past 2^53, so [double] would round them and mangle the
+  # delta — and would serialise as 1.34E+17. Keep them in [long] end to end.
+  $prevIdle = 0L; $prevTime = 0L; $totalBytes = 0L
+  if (Test-Path $sysCF) {
+    try {
+      $old = ((Get-Content $sysCF -Raw).Trim() -split '\s+')
+      if ($old.Count -ge 5) {
+        $prevIdle = [long]$old[0]; $prevTime = [long]$old[1]; $totalBytes = [long]$old[4]
+      }
+    } catch {}
+  }
+  $curIdle = 0L; $curTime = 0L; $cpuField = '-'; $ramField = '-'
   try {
-    $cpuLoad = (Get-CimInstance Win32_Processor -ErrorAction Stop | Measure-Object -Property LoadPercentage -Average).Average
-    $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
-    $ramPct = [math]::Round((($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / $os.TotalVisibleMemorySize) * 100)
-    $sysLine = "$([int]$cpuLoad) $ramPct"
+    $pc = Get-CimInstance Win32_PerfRawData_PerfOS_Processor -Filter "Name='_Total'" -ErrorAction Stop
+    $curIdle = [long]$pc.PercentIdleTime
+    $curTime = [long]$pc.Timestamp_Sys100NS
+    # The _Total instance is already averaged across cores — do NOT divide again.
+    if ($prevTime -gt 0 -and $curTime -gt $prevTime) {
+      $dTime = $curTime - $prevTime
+      if ($dTime -gt 0) {
+        $v = [math]::Round(100 - (($curIdle - $prevIdle) * 100.0 / $dTime))
+        if ($v -lt 0) { $v = 0 }
+        if ($v -gt 100) { $v = 100 }
+        $cpuField = "$v"
+      }
+    }
   } catch {}
-  Set-Content $sysCF -Value $sysLine -Encoding UTF8
+  try {
+    if ($totalBytes -le 0) {
+      $totalBytes = [long](Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).TotalPhysicalMemory
+    }
+    $avail = [long](Get-CimInstance Win32_PerfRawData_PerfOS_Memory -ErrorAction Stop).AvailableBytes
+    if ($totalBytes -gt 0) { $ramField = "$([math]::Round(($totalBytes - $avail) * 100.0 / $totalBytes))" }
+  } catch {}
+  Set-Content $sysCF -Value "$curIdle $curTime $cpuField $ramField $totalBytes" -Encoding UTF8
 }
 $sysRaw = ''
 try { $sysRaw = ((Get-Content $sysCF -Raw).Trim()) } catch {}
 if ($sysRaw) {
   $sysParts = $sysRaw -split '\s+'
-  if ($sysParts.Count -ge 2) {
-    $cpuPct = [int]$sysParts[0]
-    $ramPct = [int]$sysParts[1]
-    $cbg = BgUsed $cpuPct 22
-    $rbg = BgUsed $ramPct 24
-    $line4 += @{ bg = $cbg; fg = 15; text = " $NF_CPU CPU:$cpuPct% " }
-    $line4 += @{ bg = $rbg; fg = 15; text = " $NF_RAM RAM:$ramPct% " }
+  if ($sysParts.Count -ge 4) {
+    # CPU stays blank until a second sample exists to diff against.
+    if ($sysParts[2] -match '^\d+$') {
+      $cpuPct = [int]$sysParts[2]
+      $line4 += @{ bg = (BgUsed $cpuPct 22); fg = 15; text = " $NF_CPU CPU:$cpuPct% " }
+    }
+    if ($sysParts[3] -match '^\d+$') {
+      $ramPct = [int]$sysParts[3]
+      $line4 += @{ bg = (BgUsed $ramPct 24); fg = 15; text = " $NF_RAM RAM:$ramPct% " }
+    }
   }
 }
 

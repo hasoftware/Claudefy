@@ -23,6 +23,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reads just under 10s — an equal TTL would hit the cache every time and the
   numbers would never move.
 
+### Performance
+- Windows CPU/RAM now reads raw perf counters and diffs them between renders,
+  the same approach `/proc/stat` gives us on Linux. `Win32_Processor`'s
+  `LoadPercentage` samples internally for a full second (measured ~1050ms) and
+  `Win32_OperatingSystem` cost ~157ms, which made this widget the single most
+  expensive thing on the status line — a poor trade for something whose job is
+  to tell you the machine is busy. `Win32_PerfRawData_PerfOS_Processor` and
+  `Win32_PerfRawData_PerfOS_Memory` answer in ~6ms and ~7ms. Total physical RAM
+  is carried in the cache file rather than re-queried. Cold-cache render:
+  2882ms -> 1615ms wall, 1094ms -> 328ms CPU.
+- Those counters exceed 2^53, so they are handled as `[long]`; `[double]` was
+  rounding them and serialising the timestamp as `1.34E+17`.
+
 ## [1.5.0] - 2026-08-02
 
 ### Added
