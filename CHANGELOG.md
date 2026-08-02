@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] - 2026-08-02
+
+### Fixed
+- CPU/RAM froze while the session sat idle. Claude Code's statusLine is
+  event-driven, so with nothing happening the command simply stops being
+  invoked — measured here as 9s and 22s gaps between renders. Installers now
+  set `statusLine.refreshInterval: 10`, which re-runs the command on a timer.
+- On Linux/macOS the render cache (TTL 10s) returned early before the CPU/RAM
+  code ran, and its key didn't include those values, so a load change alone
+  was masked by a cache hit. The block now runs *before* the cache check and
+  both values are part of the key.
+
+### Changed
+- CPU/RAM sample TTL 30s -> 8s. Deliberately below the 10s `refreshInterval`:
+  the cache file is stamped partway through a run, so at the next tick its age
+  reads just under 10s — an equal TTL would hit the cache every time and the
+  numbers would never move.
+
 ## [1.5.0] - 2026-08-02
 
 ### Added

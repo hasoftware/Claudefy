@@ -546,7 +546,7 @@ if ($null -ne $durMs) {
 $line1 += @{ bg = 236; fg = 15; text = " $NF_CLOCK $timeStr " }
 
 # Claudefy update check (cached 24h)
-$CLAUDEFY_VER = '1.5.0'
+$CLAUDEFY_VER = '1.5.1'
 $updateAvail = $null
 try {
   $ucFile = "$env:TEMP\claudefy-update-check.json"
@@ -923,12 +923,14 @@ if (Test-Path $projDir) {
   if ($streak -ge 2) { $line4 += @{ bg = 58; fg = 15; text = " $NF_TROPHY ${streak}d streak " } }
 }
 
-# Widget: CPU / RAM usage (cached 30s — refresh doesn't need to be fast)
+# Widget: CPU / RAM usage. TTL sits just *below* the statusLine refreshInterval
+# (10s) — the cache file is stamped partway through a run, so by the next tick
+# its age reads a hair under 10s and an equal TTL would never expire.
 $sysCF = "$env:TEMP\claudefy-sysstat.txt"
 $sysRefresh = $true
 if (Test-Path $sysCF) {
   $sysAge = (Get-Date).ToUniversalTime() - (Get-Item $sysCF).LastWriteTimeUtc
-  if ($sysAge.TotalSeconds -lt 30) { $sysRefresh = $false }
+  if ($sysAge.TotalSeconds -lt 8) { $sysRefresh = $false }
 }
 if ($sysRefresh) {
   $sysLine = ''
@@ -1102,10 +1104,13 @@ if (Test-Path $settingsPath) {
     } catch { }
 }
 
-# statusLine — replace
+# statusLine — replace. refreshInterval keeps the CPU/RAM widget ticking while
+# the session is idle; without it the statusLine is purely event-driven and the
+# load numbers freeze exactly when you're sitting there watching them.
 $settings['statusLine'] = [ordered]@{
-    type    = 'command'
-    command = "pwsh -NoProfile -File `"$slPath`""
+    type            = 'command'
+    command         = "pwsh -NoProfile -File `"$slPath`""
+    refreshInterval = 10
 }
 
 # hooks — set ours (SessionStart + Stop), preserve other event hooks

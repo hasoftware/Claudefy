@@ -187,12 +187,64 @@ if [ "$COMPACT" = "auto" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# SYSTEM: CPU / RAM usage. TTL is deliberately *below* the statusLine
+# refreshInterval (10s): the cache file's mtime is stamped partway through a
+# run, so by the next tick its age reads a hair under 10s — an equal TTL would
+# hit the cache every time and the numbers would never move.
+# Computed *before* the render cache so its key can include these values —
+# otherwise a load change alone hits that cache and the numbers look frozen.
+# Always run, even in compact mode: seeing load on the box you just SSH'd into
+# is the whole point, and reading /proc costs nothing.
+# ---------------------------------------------------------------------------
+SYS_BG=(); SYS_FG=(); SYS_TEXT=()
+add_sys() { SYS_BG+=("$1"); SYS_FG+=("$2"); SYS_TEXT+=("$3"); }
+
+sys_cf="/tmp/claudefy-sysstat.txt"
+sys_age=$(file_age "$sys_cf")
+if [ -z "$sys_age" ] || [ "$sys_age" -ge 8 ] 2>/dev/null; then
+  prev_idle=0; prev_total=0; had_prev=0
+  if [ -f "$sys_cf" ]; then
+    read -r prev_idle prev_total _ _ < "$sys_cf" 2>/dev/null
+    [ -n "$prev_total" ] && [ "$prev_total" -gt 0 ] 2>/dev/null && had_prev=1
+  fi
+  cur_idle=0; cur_total=0; new_cpu_pct=""
+  if [ -r /proc/stat ]; then
+    read -r _ cpu_user cpu_nice cpu_system cpu_idle cpu_iowait cpu_irq cpu_softirq cpu_steal _ < /proc/stat
+    cur_idle=$((cpu_idle + cpu_iowait))
+    cur_total=$((cpu_user + cpu_nice + cpu_system + cpu_idle + cpu_iowait + cpu_irq + cpu_softirq + cpu_steal))
+    if [ "$had_prev" -eq 1 ]; then
+      d_idle=$((cur_idle - prev_idle)); d_total=$((cur_total - prev_total))
+      [ "$d_total" -gt 0 ] 2>/dev/null && new_cpu_pct=$(( 100 - (d_idle * 100 / d_total) ))
+    fi
+  fi
+  new_ram_pct=""
+  if [ -r /proc/meminfo ]; then
+    mem_total=$(awk '/^MemTotal:/{print $2}' /proc/meminfo)
+    mem_avail=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)
+    if [ -n "$mem_total" ] && [ -n "$mem_avail" ] && [ "$mem_total" -gt 0 ] 2>/dev/null; then
+      new_ram_pct=$(( (mem_total - mem_avail) * 100 / mem_total ))
+    fi
+  fi
+  printf '%s %s %s %s\n' "$cur_idle" "$cur_total" "$new_cpu_pct" "$new_ram_pct" > "$sys_cf"
+fi
+cpu_pct=""; ram_pct=""
+[ -f "$sys_cf" ] && read -r _ _ cpu_pct ram_pct < "$sys_cf" 2>/dev/null
+if [ -n "$cpu_pct" ]; then
+  sys_bg=$(bg_used "$cpu_pct" 22)
+  add_sys "$sys_bg" 15 " $NF_CPU CPU:${cpu_pct}% "
+fi
+if [ -n "$ram_pct" ]; then
+  sys_bg=$(bg_used "$ram_pct" 24)
+  add_sys "$sys_bg" 15 " $NF_RAM RAM:${ram_pct}% "
+fi
+
+# ---------------------------------------------------------------------------
 # Render cache — when the values we display are unchanged, reuse the last
 # render verbatim (TTL 10s). Identical output lets the host UI diff to a
 # no-op instead of repainting, which keeps full mode smooth even over SSH.
 # ---------------------------------------------------------------------------
 tok_h=$(human_tokens $((in_tok + out_tok)))
-rc_key="$COMPACT|$cwd|$model|$perm|${ctx%.*}|${fh%.*}|${sd%.*}|${op%.*}|$cost|$added|$removed|$((dur_ms / 60000))|$tok_h|$(date -u +%H:%M)"
+rc_key="$COMPACT|$cwd|$model|$perm|${ctx%.*}|${fh%.*}|${sd%.*}|${op%.*}|$cost|$added|$removed|$((dur_ms / 60000))|$tok_h|$cpu_pct|$ram_pct|$(date -u +%H:%M)"
 rc_file="/tmp/claudefy-render-${session_id:-nosession}.txt"
 if [ -f "$rc_file" ]; then
   rc_age=$(file_age "$rc_file")
@@ -417,7 +469,7 @@ fi
 add_l1 236 15 " $NF_CLOCK $time_str "
 
 # Claudefy update check (cached 24h)
-CLAUDEFY_VER='1.5.0'
+CLAUDEFY_VER='1.5.1'
 update_avail=""
 uc_file="/tmp/claudefy-update-check.json"
 latest_ver=""
@@ -721,53 +773,6 @@ if [ "$COMPACT" != "1" ] && [ -n "$cwd" ] && [ -d "$cwd" ] && command -v devrada
       fi
     fi
   fi
-fi
-
-# ===========================================================================
-# SYSTEM: CPU / RAM usage (cached 30s — refresh doesn't need to be fast).
-# Always computed, even in compact mode: seeing free RAM/CPU on the box
-# you just SSH'd into is the whole point, and reading /proc costs nothing.
-# ===========================================================================
-SYS_BG=(); SYS_FG=(); SYS_TEXT=()
-add_sys() { SYS_BG+=("$1"); SYS_FG+=("$2"); SYS_TEXT+=("$3"); }
-
-sys_cf="/tmp/claudefy-sysstat.txt"
-sys_age=$(file_age "$sys_cf")
-if [ -z "$sys_age" ] || [ "$sys_age" -ge 30 ] 2>/dev/null; then
-  prev_idle=0; prev_total=0; had_prev=0
-  if [ -f "$sys_cf" ]; then
-    read -r prev_idle prev_total _ _ < "$sys_cf" 2>/dev/null
-    [ -n "$prev_total" ] && [ "$prev_total" -gt 0 ] 2>/dev/null && had_prev=1
-  fi
-  cur_idle=0; cur_total=0; new_cpu_pct=""
-  if [ -r /proc/stat ]; then
-    read -r _ cpu_user cpu_nice cpu_system cpu_idle cpu_iowait cpu_irq cpu_softirq cpu_steal _ < /proc/stat
-    cur_idle=$((cpu_idle + cpu_iowait))
-    cur_total=$((cpu_user + cpu_nice + cpu_system + cpu_idle + cpu_iowait + cpu_irq + cpu_softirq + cpu_steal))
-    if [ "$had_prev" -eq 1 ]; then
-      d_idle=$((cur_idle - prev_idle)); d_total=$((cur_total - prev_total))
-      [ "$d_total" -gt 0 ] 2>/dev/null && new_cpu_pct=$(( 100 - (d_idle * 100 / d_total) ))
-    fi
-  fi
-  new_ram_pct=""
-  if [ -r /proc/meminfo ]; then
-    mem_total=$(awk '/^MemTotal:/{print $2}' /proc/meminfo)
-    mem_avail=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)
-    if [ -n "$mem_total" ] && [ -n "$mem_avail" ] && [ "$mem_total" -gt 0 ] 2>/dev/null; then
-      new_ram_pct=$(( (mem_total - mem_avail) * 100 / mem_total ))
-    fi
-  fi
-  printf '%s %s %s %s\n' "$cur_idle" "$cur_total" "$new_cpu_pct" "$new_ram_pct" > "$sys_cf"
-fi
-cpu_pct=""; ram_pct=""
-[ -f "$sys_cf" ] && read -r _ _ cpu_pct ram_pct < "$sys_cf" 2>/dev/null
-if [ -n "$cpu_pct" ]; then
-  bg=$(bg_used "$cpu_pct" 22)
-  add_sys "$bg" 15 " $NF_CPU CPU:${cpu_pct}% "
-fi
-if [ -n "$ram_pct" ]; then
-  bg=$(bg_used "$ram_pct" 24)
-  add_sys "$bg" 15 " $NF_RAM RAM:${ram_pct}% "
 fi
 
 # ===========================================================================

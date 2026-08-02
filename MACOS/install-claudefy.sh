@@ -197,7 +197,7 @@ echo "$EXIST" | jq empty 2>/dev/null || EXIST='{}'
 NEW=$(echo "$EXIST" | jq \
   --arg sl "$SL_PATH" --arg nt "$NT_PATH" --arg tt "$TT_PATH" \
   --argjson allows "$KIT_ALLOWS" '
-  .statusLine = { type: "command", command: ("bash \"" + $sl + "\"") }
+  .statusLine = { type: "command", command: ("bash \"" + $sl + "\""), refreshInterval: 10 }
   | .hooks = (.hooks // {})
   | .hooks.SessionStart = [ { matcher: "", hooks: [ { type: "command", command: ("bash \"" + $tt + "\"") } ] } ]
   | .hooks.Stop         = [ { matcher: "", hooks: [ { type: "command", command: ("bash \"" + $nt + "\"") } ] } ]
