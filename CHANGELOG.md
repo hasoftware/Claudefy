@@ -5,12 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.5.1] - 2026-08-02
+## [1.5.2] - 2026-08-02
 
 A release about cost. Adding the load widget in 1.5.0 prompted the obvious
-question — what does the status line itself cost? — and profiling turned up a
-long-standing bug plus several widgets doing far more work than they needed to.
-Measured on Windows, a render went from 1375ms/412ms (wall/CPU) to 489ms/131ms.
+question — what does the status line itself cost? — and profiling turned up one
+pathological call plus a long-standing bug and several widgets doing far more
+work than they needed to.
+
+On Windows a render went from **~17,200ms to ~410ms**, and no longer degrades as
+a session grows. Verified with a 5-minute soak (117 renders, zero errors, flat
+across quarters while the transcript grew) and against transcripts up to 29MB.
+
+(1.5.1 was tagged internally but never published; its notes are folded in here.)
 
 ### Fixed
 - **`gh pr list` ran on every single render** on any branch without an open PR,
@@ -54,7 +60,11 @@ Measured on Windows, a render went from 1375ms/412ms (wall/CPU) to 489ms/131ms.
   was added since — instead of two full-file scans (~108ms at 2.9MB, and
   climbing) on every message. Counting stops at the last newline so a record
   still being written is never half-counted; verified exact against full scans
-  across successive appends.
+  across successive appends and at 1/5/15/29MB.
+- The first render of a resumed session no longer stalls. With no checkpoint to
+  work from the whole file must be counted, and materialising it as a single
+  string cost **31.7s at 29MB**; `Select-String` streams it instead — 1.4s, and
+  every render after that is back to ~410ms regardless of size.
 - Runtime detection is cached 60s per cwd on Windows, as it already was on
   Linux/macOS. Every branch of it shells out to a version flag, so each render
   had been spawning `node --version` (or python/rustc/go/dotnet/java/ruby) just

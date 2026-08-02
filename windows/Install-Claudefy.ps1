@@ -634,7 +634,7 @@ if ($null -ne $durMs) {
 $line1 += @{ bg = 236; fg = 15; text = " $NF_CLOCK $timeStr " }
 
 # Claudefy update check (cached 24h)
-$CLAUDEFY_VER = '1.5.1'
+$CLAUDEFY_VER = '1.5.2'
 $updateAvail = $null
 try {
   $ucFile = "$env:TEMP\claudefy-update-check.json"
@@ -837,23 +837,43 @@ if ($tp -and (Test-Path $tp)) {
     try {
       $fs = [System.IO.File]::Open($tp, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
       try {
-        # Cumulative counters: only the bytes appended since the checkpoint.
-        $addLen = [int]($tpLen - $scanFrom)
-        if ($addLen -gt 0) {
-          $null = $fs.Seek($scanFrom, [System.IO.SeekOrigin]::Begin)
-          $abuf = New-Object byte[] $addLen
-          $aread = $fs.Read($abuf, 0, $addLen)
-          $chunk = [System.Text.Encoding]::UTF8.GetString($abuf, 0, $aread)
-          # Stop at the last newline so a record still being written is never
-          # half-counted, and advance the checkpoint by exactly those bytes.
-          $lastNl = $chunk.LastIndexOf("`n")
-          if ($lastNl -ge 0) {
-            $whole = $chunk.Substring(0, $lastNl + 1)
-            $turns += & $countSub $whole '"type":"user"'
-            $cpt   += & $countSub $whole 'compact_boundary'
-            $checkpoint = $scanFrom + [System.Text.Encoding]::UTF8.GetByteCount($whole)
+        # Locate the final newline, so a record still mid-write is never counted
+        # early — nor counted twice once it lands.
+        $tailPartial = ''
+        $probeLen = [int][math]::Min(65536, $fs.Length)
+        if ($probeLen -gt 0) {
+          $null = $fs.Seek(-$probeLen, [System.IO.SeekOrigin]::End)
+          $pbuf = New-Object byte[] $probeLen
+          $pread = $fs.Read($pbuf, 0, $probeLen)
+          $ptxt = [System.Text.Encoding]::UTF8.GetString($pbuf, 0, $pread)
+          $pnl = $ptxt.LastIndexOf("`n")
+          if ($pnl -ge 0) { $tailPartial = $ptxt.Substring($pnl + 1) } else { $tailPartial = $ptxt }
+        }
+        $completeLen = $tpLen - [System.Text.Encoding]::UTF8.GetByteCount($tailPartial)
+
+        if ($scanFrom -gt 0 -and $scanFrom -le $completeLen) {
+          # Warm: count only the complete bytes appended since the checkpoint.
+          $addLen = [int]($completeLen - $scanFrom)
+          if ($addLen -gt 0) {
+            $null = $fs.Seek($scanFrom, [System.IO.SeekOrigin]::Begin)
+            $abuf = New-Object byte[] $addLen
+            $aread = $fs.Read($abuf, 0, $addLen)
+            $chunk = [System.Text.Encoding]::UTF8.GetString($abuf, 0, $aread)
+            $turns += & $countSub $chunk '"type":"user"'
+            $cpt   += & $countSub $chunk 'compact_boundary'
+          }
+        } else {
+          # Cold — no usable checkpoint, so the whole file has to be counted.
+          # Select-String streams it (~18ms/MB); materialising 29MB as one
+          # string instead cost 31s, which is what a `--resume` used to pay.
+          $turns = (Select-String -Path $tp -Pattern '"type":"user"' -SimpleMatch | Measure-Object).Count
+          $cpt   = (Select-String -Path $tp -Pattern 'compact_boundary' -SimpleMatch | Measure-Object).Count
+          if ($tailPartial) {
+            $turns -= & $countSub $tailPartial '"type":"user"'
+            $cpt   -= & $countSub $tailPartial 'compact_boundary'
           }
         }
+        $checkpoint = $completeLen
         # Phase is a rolling window, not a running total — always the tail.
         $tailLen = [int][math]::Min(150000, $fs.Length)
         $null = $fs.Seek(-$tailLen, [System.IO.SeekOrigin]::End)
