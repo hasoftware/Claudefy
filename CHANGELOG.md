@@ -39,9 +39,28 @@ Measured on Windows, a render went from 1375ms/412ms (wall/CPU) to 489ms/131ms.
   unchanged — and it no longer breaks when git isn't printing English.
 
 ### Performance
+- **`Get-Content -Tail 300` was costing ~20 seconds per render** on Windows and
+  got worse the longer a session ran. It counts lines by walking the file
+  backwards, and a transcript is JSONL whose lines are whole messages, often
+  tens of KB each: 231ms at 1.35MB, **19,698ms at 2.87MB**. Since renders are
+  requested every couple of seconds and Claude Code kills the in-flight process
+  when a new one is due, the machine sat permanently spawning and killing a
+  20-second script — the sawtooth you'd see in Task Manager, filed under "Git
+  for Windows" because Claude Code launches the status line through Git Bash.
+  Now read by byte offset via `FileStream.Seek`, the way `tail -c` already did
+  it on Linux/macOS: **22ms**, and flat regardless of session length.
+- Turn and compact counts are accumulated incrementally. Transcripts are
+  append-only, so a stored byte checkpoint means each render counts only what
+  was added since — instead of two full-file scans (~108ms at 2.9MB, and
+  climbing) on every message. Counting stops at the last newline so a record
+  still being written is never half-counted; verified exact against full scans
+  across successive appends.
+- Runtime detection is cached 60s per cwd on Windows, as it already was on
+  Linux/macOS. Every branch of it shells out to a version flag, so each render
+  had been spawning `node --version` (or python/rustc/go/dotnet/java/ruby) just
+  to be told the same number again.
 - Transcript widgets (turns, session phase, compact count) share one cache keyed
-  on the transcript's size and mtime. They read the whole file and accounted for
-  ~264ms of a ~425ms render; they cannot change unless the transcript does.
+  on the transcript's size and mtime, so an idle session re-reads nothing.
 - Git dropped from six processes per render to one. `status --porcelain=v2
   --branch` yields branch, ahead/behind and dirty count together, and stash
   count plus commit time hang off a cache keyed on the HEAD commit. Line 3 reuses

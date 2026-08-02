@@ -417,9 +417,27 @@ if ($cwd -and (Test-Path $cwd)) {
   }
 }
 
-# Runtime detection
+# Runtime detection (cached 60s per cwd, as on Linux/macOS).
+# Every branch below shells out to a version flag — `node --version` and
+# friends — so without the cache each render spawned another whole process
+# just to be told the same version number again.
 $runtime = $null
-if ($cwd -and (Test-Path $cwd)) {
+$rtCF = "$env:TEMP\claudefy-runtime-$(($cwd -replace '[\\/:*?""<>|]','_')).txt"
+$rtFresh = $false
+if (Test-Path $rtCF) {
+  $rtAge = (Get-Date).ToUniversalTime() - (Get-Item $rtCF).LastWriteTimeUtc
+  if ($rtAge.TotalSeconds -lt 60 -and $rtAge.TotalSeconds -ge 0) { $rtFresh = $true }
+}
+if ($rtFresh) {
+  try {
+    $rtRaw = (Get-Content $rtCF -Raw).Trim()
+    if ($rtRaw) {
+      $rtP = $rtRaw -split '\|', 2
+      if ($rtP.Count -eq 2) { $runtime = @{ icon = $rtP[0]; name = $rtP[1] } }
+    }
+  } catch {}
+}
+elseif ($cwd -and (Test-Path $cwd)) {
   if (Test-Path (Join-Path $cwd 'package.json')) {
     $v = & node --version 2>$null
     if ($v) { $runtime = @{ icon = $NF_NODE; name = ("Node " + ($v -replace '^v','')) } }
@@ -466,6 +484,12 @@ if ($cwd -and (Test-Path $cwd)) {
       $runtime = @{ icon = $NF_RUBY; name = "Ruby $($Matches[1])" }
     }
   }
+}
+# Written even when nothing was detected, so a project with no recognised
+# runtime doesn't re-probe on every render.
+if (-not $rtFresh) {
+  $rtLine = if ($runtime) { "$($runtime.icon)|$($runtime.name)" } else { '' }
+  try { Set-Content $rtCF -Value $rtLine -Encoding UTF8 } catch {}
 }
 if ($runtime) {
   $line1 += @{ bg = 24; fg = 15; text = " $($runtime.icon) $($runtime.name) " }
@@ -770,28 +794,77 @@ if ($null -ne $tok) {
 $tp = $d.transcript_path
 if ($tp -and (Test-Path $tp)) {
   $tpItem = Get-Item $tp
-  $tpKey  = "$($tpItem.Length)-$($tpItem.LastWriteTimeUtc.Ticks)"
+  $tpLen  = $tpItem.Length
+  $tpKey  = "$tpLen-$($tpItem.LastWriteTimeUtc.Ticks)"
   $txCF   = "$env:TEMP\claudefy-tx-$($d.session_id).txt"
   $turns = 0; $buildN = 0; $exploreN = 0; $cpt = 0
   $txHit = $false
+  # Cache line: key checkpointByte turns buildN exploreN cpt
+  $scanFrom = 0L; $baseTurns = 0; $baseCpt = 0
   if (Test-Path $txCF) {
     try {
       $txP = (Get-Content $txCF -Raw).Trim() -split '\s+'
-      if ($txP.Count -ge 5 -and $txP[0] -eq $tpKey) {
-        $turns = [int]$txP[1]; $buildN = [int]$txP[2]; $exploreN = [int]$txP[3]; $cpt = [int]$txP[4]
-        $txHit = $true
+      if ($txP.Count -ge 6) {
+        if ($txP[0] -eq $tpKey) {
+          $turns = [int]$txP[2]; $buildN = [int]$txP[3]; $exploreN = [int]$txP[4]; $cpt = [int]$txP[5]
+          $txHit = $true
+        } else {
+          # Transcripts are append-only, so a previous checkpoint lets us count
+          # only the bytes added since. Without this the two full-file scans
+          # grow with the session: ~108ms at 2.9MB, seconds at 20MB, paid again
+          # on every message.
+          $cp = [long]$txP[1]
+          if ($cp -gt 0 -and $cp -le $tpLen) { $scanFrom = $cp; $baseTurns = [int]$txP[2]; $baseCpt = [int]$txP[5] }
+        }
       }
     } catch {}
   }
   if (-not $txHit) {
-    $turns = (Select-String -Path $tp -Pattern '"type":"user"' -SimpleMatch | Measure-Object).Count
-    $cpt   = (Select-String -Path $tp -Pattern 'compact_boundary' -SimpleMatch | Measure-Object).Count
+    $countSub = {
+      param([string]$hay, [string]$needle)
+      $n = 0; $i = 0
+      while (($i = $hay.IndexOf($needle, $i)) -ge 0) { $n++; $i += $needle.Length }
+      $n
+    }
+    $checkpoint = $scanFrom
+    $turns = $baseTurns; $cpt = $baseCpt
+    # Read the tail by byte offset, the way `tail -c` does on the other two
+    # platforms. `Get-Content -Tail 300` counts lines by walking the file
+    # backwards, and a transcript is JSONL whose lines are whole messages —
+    # often tens of KB each. That degrades catastrophically as a session grows:
+    # measured 231ms at 1.35MB and 19,698ms at 2.87MB, against 22ms here.
+    # FileShare ReadWrite so we never block Claude Code appending to it.
     try {
-      $recent   = (Get-Content $tp -Tail 300 -ErrorAction SilentlyContinue) -join ' '
+      $fs = [System.IO.File]::Open($tp, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+      try {
+        # Cumulative counters: only the bytes appended since the checkpoint.
+        $addLen = [int]($tpLen - $scanFrom)
+        if ($addLen -gt 0) {
+          $null = $fs.Seek($scanFrom, [System.IO.SeekOrigin]::Begin)
+          $abuf = New-Object byte[] $addLen
+          $aread = $fs.Read($abuf, 0, $addLen)
+          $chunk = [System.Text.Encoding]::UTF8.GetString($abuf, 0, $aread)
+          # Stop at the last newline so a record still being written is never
+          # half-counted, and advance the checkpoint by exactly those bytes.
+          $lastNl = $chunk.LastIndexOf("`n")
+          if ($lastNl -ge 0) {
+            $whole = $chunk.Substring(0, $lastNl + 1)
+            $turns += & $countSub $whole '"type":"user"'
+            $cpt   += & $countSub $whole 'compact_boundary'
+            $checkpoint = $scanFrom + [System.Text.Encoding]::UTF8.GetByteCount($whole)
+          }
+        }
+        # Phase is a rolling window, not a running total — always the tail.
+        $tailLen = [int][math]::Min(150000, $fs.Length)
+        $null = $fs.Seek(-$tailLen, [System.IO.SeekOrigin]::End)
+        $buf = New-Object byte[] $tailLen
+        $read = $fs.Read($buf, 0, $tailLen)
+        $recent = [System.Text.Encoding]::UTF8.GetString($buf, 0, $read)
+      } finally { $fs.Dispose() }
       $buildN   = ([regex]::Matches($recent, '"name":"(Edit|Write|NotebookEdit)"')).Count
       $exploreN = ([regex]::Matches($recent, '"name":"(Read|Grep|Glob)"')).Count
     } catch {}
-    Set-Content $txCF -Value "$tpKey $turns $buildN $exploreN $cpt" -Encoding UTF8
+    Set-Content $txCF -Value "$tpKey $checkpoint $turns $buildN $exploreN $cpt" -Encoding UTF8
   }
 
   if ($turns -gt 0) {
