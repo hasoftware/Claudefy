@@ -95,6 +95,8 @@ NF_SEARCH=$'\xef\x80\x82'   # U+F002 magnifier
 NF_MOON=$'\xef\x86\x86'     # U+F186 moon (idle)
 NF_TROPHY=$'\xef\x82\x91'   # U+F091 trophy
 NF_BOMB=$'\xef\x87\xa2'     # U+F1E2 bomb (merge conflicts)
+NF_CPU=$'\xef\x83\xa4'      # U+F0E4 tachometer (CPU load)
+NF_RAM=$'\xef\x88\xb3'      # U+F233 server (RAM usage)
 ICON_RECYCLE=$'\xe2\x99\xbb'   # U+267B recycle (compact count)
 ICON_HOURGLASS=$'\xe2\x8c\x9b' # U+231B hourglass
 ICON_SIGMA=$'\xce\xa3'         # U+03A3 sigma
@@ -721,6 +723,48 @@ if [ "$COMPACT" != "1" ] && [ -n "$cwd" ] && [ -d "$cwd" ] && command -v devrada
 fi
 
 # ===========================================================================
+# SYSTEM: CPU / RAM usage (cached 30s — refresh doesn't need to be fast).
+# Always computed, even in compact mode: seeing free RAM/CPU on the box
+# you just SSH'd into is the whole point. No /proc on macOS, so this shells
+# out to top/vm_stat/sysctl instead — still cheap since it's TTL-cached.
+# ===========================================================================
+SYS_BG=(); SYS_FG=(); SYS_TEXT=()
+add_sys() { SYS_BG+=("$1"); SYS_FG+=("$2"); SYS_TEXT+=("$3"); }
+
+sys_cf="/tmp/claudefy-sysstat.txt"
+sys_age=$(file_age "$sys_cf")
+if [ -z "$sys_age" ] || [ "$sys_age" -ge 30 ] 2>/dev/null; then
+  new_cpu_pct=""
+  idle_str=$(top -l 1 2>/dev/null | awk -F'[ %]+' '/CPU usage/{for(i=1;i<=NF;i++) if($i=="idle"){print $(i-1); exit}}')
+  [ -n "$idle_str" ] && new_cpu_pct=$(awk -v i="$idle_str" 'BEGIN{ printf "%.0f", 100 - i }')
+
+  new_ram_pct=""
+  mem_total_bytes=$(sysctl -n hw.memsize 2>/dev/null)
+  vm_raw=$(vm_stat 2>/dev/null)
+  page_size=$(echo "$vm_raw" | head -1 | grep -oE '[0-9]+' | head -1)
+  [ -z "$page_size" ] && page_size=4096
+  used_pages=$(echo "$vm_raw" | awk '
+    /Pages active/{gsub(/\./,"",$3); a=$3}
+    /Pages wired down/{gsub(/\./,"",$4); w=$4}
+    /Pages occupied by compressor/{gsub(/\./,"",$5); c=$5}
+    END{print a+0+w+0+c+0}')
+  if [ -n "$mem_total_bytes" ] && [ "$mem_total_bytes" -gt 0 ] 2>/dev/null && [ -n "$used_pages" ]; then
+    new_ram_pct=$(awk -v u="$used_pages" -v ps="$page_size" -v t="$mem_total_bytes" 'BEGIN{ printf "%.0f", (u*ps*100)/t }')
+  fi
+  printf '%s %s\n' "$new_cpu_pct" "$new_ram_pct" > "$sys_cf"
+fi
+cpu_pct=""; ram_pct=""
+[ -f "$sys_cf" ] && read -r cpu_pct ram_pct < "$sys_cf" 2>/dev/null
+if [ -n "$cpu_pct" ]; then
+  bg=$(bg_used "$cpu_pct" 22)
+  add_sys "$bg" 15 " $NF_CPU CPU:${cpu_pct}% "
+fi
+if [ -n "$ram_pct" ]; then
+  bg=$(bg_used "$ram_pct" 24)
+  add_sys "$bg" 15 " $NF_RAM RAM:${ram_pct}% "
+fi
+
+# ===========================================================================
 # LINE 4: Branding
 # ===========================================================================
 L4_BG=(); L4_FG=(); L4_TEXT=()
@@ -767,6 +811,8 @@ if [ "$COMPACT" != "1" ] && [ -d "$HOME/.claude/projects" ]; then
   [ "$streak" -ge 2 ] 2>/dev/null && add_l4 58 15 " $NF_TROPHY ${streak}d streak "
 fi
 
+for si in "${!SYS_BG[@]}"; do add_l4 "${SYS_BG[si]}" "${SYS_FG[si]}" "${SYS_TEXT[si]}"; done
+
 add_l4 237 75 " Claudefy v$CLAUDEFY_VER "
 add_l4 237 208 " Author: HoangAnhDev "
 
@@ -777,7 +823,12 @@ line1=$(render_line L1_BG L1_FG L1_TEXT)
 line2=$(render_line L2_BG L2_FG L2_TEXT)
 line4=$(render_line L4_BG L4_FG L4_TEXT)
 if [ "$COMPACT" = "1" ]; then
-  out_final=$(printf '%s\n%s' "$line1" "$line2")
+  if [ "${#SYS_BG[@]}" -gt 0 ]; then
+    line_sys=$(render_line SYS_BG SYS_FG SYS_TEXT)
+    out_final=$(printf '%s\n%s\n%s' "$line1" "$line2" "$line_sys")
+  else
+    out_final=$(printf '%s\n%s' "$line1" "$line2")
+  fi
 elif [ "${#L3_BG[@]}" -gt 0 ]; then
   line3=$(render_line L3_BG L3_FG L3_TEXT)
   out_final=$(printf '%s\n%s\n%s\n%s' "$line1" "$line2" "$line3" "$line4")

@@ -276,6 +276,8 @@ $NF_SEARCH   = [char]0xF002
 $NF_MOON     = [char]0xF186
 $NF_TROPHY   = [char]0xF091
 $NF_BOMB     = [char]0xF1E2
+$NF_CPU      = [char]0xF0E4
+$NF_RAM      = [char]0xF233
 
 function BgUsed([double]$pct, [int]$goodColor = 22) {
   if ($pct -ge 80) { return 88 }
@@ -919,6 +921,37 @@ if (Test-Path $projDir) {
   $streak = 0
   try { $streak = [int](Get-Content $stCF -Raw).Trim() } catch {}
   if ($streak -ge 2) { $line4 += @{ bg = 58; fg = 15; text = " $NF_TROPHY ${streak}d streak " } }
+}
+
+# Widget: CPU / RAM usage (cached 30s — refresh doesn't need to be fast)
+$sysCF = "$env:TEMP\claudefy-sysstat.txt"
+$sysRefresh = $true
+if (Test-Path $sysCF) {
+  $sysAge = (Get-Date).ToUniversalTime() - (Get-Item $sysCF).LastWriteTimeUtc
+  if ($sysAge.TotalSeconds -lt 30) { $sysRefresh = $false }
+}
+if ($sysRefresh) {
+  $sysLine = ''
+  try {
+    $cpuLoad = (Get-CimInstance Win32_Processor -ErrorAction Stop | Measure-Object -Property LoadPercentage -Average).Average
+    $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+    $ramPct = [math]::Round((($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / $os.TotalVisibleMemorySize) * 100)
+    $sysLine = "$([int]$cpuLoad) $ramPct"
+  } catch {}
+  Set-Content $sysCF -Value $sysLine -Encoding UTF8
+}
+$sysRaw = ''
+try { $sysRaw = ((Get-Content $sysCF -Raw).Trim()) } catch {}
+if ($sysRaw) {
+  $sysParts = $sysRaw -split '\s+'
+  if ($sysParts.Count -ge 2) {
+    $cpuPct = [int]$sysParts[0]
+    $ramPct = [int]$sysParts[1]
+    $cbg = BgUsed $cpuPct 22
+    $rbg = BgUsed $ramPct 24
+    $line4 += @{ bg = $cbg; fg = 15; text = " $NF_CPU CPU:$cpuPct% " }
+    $line4 += @{ bg = $rbg; fg = 15; text = " $NF_RAM RAM:$ramPct% " }
+  }
 }
 
 $line4 += @{ bg = 237; fg = 75; text = " Claudefy v$CLAUDEFY_VER " }
