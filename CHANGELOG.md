@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-08-02
+
+### Added
+- CPU / RAM usage widget (Line 4) on all three platforms, cached 30s so it
+  doesn't refresh faster than needed. Reads `/proc/stat` + `/proc/meminfo`
+  on Linux, `top`/`vm_stat`/`sysctl` on macOS, `Win32_Processor`/
+  `Win32_OperatingSystem` via CIM on Windows.
+- On Linux/macOS this widget renders as its own line while in SSH compact
+  mode (which otherwise drops Line 4 entirely) — seeing free RAM/CPU on the
+  box you just SSH'd into is the main reason to want it.
+
 ## [1.4.5] - 2026-08-02
 
 ### Fixed

@@ -546,7 +546,7 @@ if ($null -ne $durMs) {
 $line1 += @{ bg = 236; fg = 15; text = " $NF_CLOCK $timeStr " }
 
 # Claudefy update check (cached 24h)
-$CLAUDEFY_VER = '1.4.4'
+$CLAUDEFY_VER = '1.5.0'
 $updateAvail = $null
 try {
   $ucFile = "$env:TEMP\claudefy-update-check.json"
